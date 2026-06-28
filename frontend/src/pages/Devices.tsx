@@ -123,7 +123,7 @@ export function Devices() {
     const rows = stateItems.map((d) => ({
       ip: d.addr,
       hostname: d.hostname ?? "",
-      status: d.state,
+      status: d.ok ? "up" : "down",
       last_seen: d.ts,
     }));
     exportCsv(rows, "argus-devices.csv");
@@ -176,7 +176,8 @@ export function Devices() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {devices.map((d) => {
-                  const liveState = deviceStates[d.ip_address]?.state;
+                  const liveEvent = deviceStates[d.ip_address];
+                  const liveState = liveEvent ? (liveEvent.ok ? "up" : "down") : undefined;
                   return (
                     <tr key={d.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3 font-mono text-gray-800">

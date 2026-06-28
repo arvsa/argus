@@ -13,8 +13,10 @@ export async function login(email: string, password: string) {
   return res.data;
 }
 
-export async function getMe() {
-  const res = await client.get("/users/me");
+export async function getMe(token?: string) {
+  const res = await client.get("/users/me", {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
   return res.data;
 }
 

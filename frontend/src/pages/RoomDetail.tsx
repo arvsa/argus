@@ -54,7 +54,8 @@ export function RoomDetail() {
 
   const devices = (states ?? []).map((d) => {
     const live = deviceStates[d.addr];
-    return { ...d, state: live?.state ?? d.state };
+    const ok = live?.ok ?? d.ok;
+    return { ...d, ok };
   });
 
   const updateMut = useMutation({
@@ -75,8 +76,8 @@ export function RoomDetail() {
   if (isLoading) return <PageSpinner />;
   if (!room) return <p className="text-sm text-gray-500">Room not found.</p>;
 
-  const upCount = devices.filter((d) => d.state === "up").length;
-  const downCount = devices.filter((d) => d.state === "down").length;
+  const upCount = devices.filter((d) => d.ok).length;
+  const downCount = devices.filter((d) => !d.ok).length;
 
   return (
     <div className="space-y-6">
@@ -155,7 +156,7 @@ export function RoomDetail() {
                   <td className="px-4 py-3 font-mono text-gray-800">{d.addr}</td>
                   <td className="px-4 py-3 text-gray-500 hidden sm:table-cell">{d.hostname ?? "—"}</td>
                   <td className="px-4 py-3">
-                    <StatusBadge status={d.state ?? "unknown"} />
+                    <StatusBadge status={d.ok ? "up" : "down"} />
                   </td>
                   <td className="px-4 py-3 text-xs text-gray-400 hidden md:table-cell">{d.ts ? formatTimestamp(d.ts) : "—"}</td>
                 </tr>

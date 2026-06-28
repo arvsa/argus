@@ -46,8 +46,8 @@ export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const deviceStates = useWsStore((s) => s.deviceStates);
 
-  const upCount = Object.values(deviceStates).filter((d) => d.state === "up").length;
-  const downCount = Object.values(deviceStates).filter((d) => d.state === "down").length;
+  const upCount = Object.values(deviceStates).filter((d) => d.ok).length;
+  const downCount = Object.values(deviceStates).filter((d) => !d.ok).length;
 
   function handleLogout() {
     logout();

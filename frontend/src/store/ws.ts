@@ -2,8 +2,9 @@ import { create } from "zustand";
 
 export interface PingEvent {
   addr: string;
-  state: "up" | "down";
+  ok: boolean;
   ts: number;
+  rtt_ms?: number;
   room_id?: string;
   bldg_id?: string;
   hostname?: string;

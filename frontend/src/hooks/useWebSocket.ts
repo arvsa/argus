@@ -13,8 +13,12 @@ export function useWebSocket() {
     if (!token) return;
 
     function connect() {
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const ws = new WebSocket(`${protocol}://${window.location.host}/ws/pings`);
+      // VITE_WS_BASE overrides the host in dev (e.g. ws://localhost:8000).
+      // In production leave it unset; the path is served from the same origin.
+      const base =
+        (import.meta.env.VITE_WS_BASE as string | undefined) ??
+        `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+      const ws = new WebSocket(`${base}/api/v1/ws/pings`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -25,7 +29,7 @@ export function useWebSocket() {
       ws.onmessage = (e) => {
         try {
           const ev = JSON.parse(e.data);
-          if (ev.addr && ev.state) addEvent(ev);
+          if (ev.addr && ev.ok !== undefined) addEvent(ev);
         } catch {
           // ignore malformed frames
         }

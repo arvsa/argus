@@ -23,7 +23,7 @@ export function Login() {
     setError(null);
     try {
       const { access_token } = await login(data.username, data.password);
-      const user = await getMe();
+      const user = await getMe(access_token);
       setAuth(access_token, user);
       const from = (location.state as { from?: Location })?.from?.pathname ?? "/dashboard";
       navigate(from, { replace: true });

@@ -57,8 +57,9 @@ export const uploadDevicesCsv = async (file: File, dry_run = false) => {
 
 export interface StateItem {
   addr: string;
-  state: "up" | "down";
+  ok: boolean;
   ts: number;
+  rtt_ms?: number;
   room_id?: string;
   hostname?: string;
 }
@@ -72,5 +73,16 @@ export interface StateResponse {
 
 export const getState = async (page = 1, size = 100) => {
   const res = await client.get<StateResponse>("/state", { params: { page, size } });
+  return res.data;
+};
+
+export interface StatsResponse {
+  total: number;
+  up: number;
+  down: number;
+}
+
+export const getStats = async () => {
+  const res = await client.get<StatsResponse>("/stats");
   return res.data;
 };

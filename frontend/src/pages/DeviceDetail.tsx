@@ -80,7 +80,7 @@ export function DeviceDetail() {
           <div>
             <p className="text-xs font-medium uppercase tracking-wider text-gray-400">Status</p>
             <div className="mt-1">
-              <StatusBadge status={liveState?.state ?? "unknown"} />
+              <StatusBadge status={liveState ? (liveState.ok ? "up" : "down") : "unknown"} />
             </div>
           </div>
           <div>

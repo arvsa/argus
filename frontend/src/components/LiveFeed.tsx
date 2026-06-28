@@ -18,7 +18,7 @@ export function LiveFeed() {
       {events.map((ev, i) => (
         <div key={i} className="flex items-center justify-between px-1 py-2 text-sm">
           <div className="flex items-center gap-3 min-w-0">
-            <StatusBadge status={ev.state} />
+            <StatusBadge status={ev.ok ? "up" : "down"} />
             <span className="font-mono text-gray-800 truncate">{ev.addr}</span>
             {ev.hostname && (
               <span className="text-gray-400 truncate hidden sm:block">({ev.hostname})</span>

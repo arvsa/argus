@@ -15,8 +15,9 @@ export interface RoomsPublic {
 
 export interface DeviceState {
   addr: string;
-  state: "up" | "down";
+  ok: boolean;
   ts: number;
+  rtt_ms?: number;
   room_id?: string;
   hostname?: string;
 }
