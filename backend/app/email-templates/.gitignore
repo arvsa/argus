@@ -1,0 +1,5 @@
+# Un-ignore the compiled HTML templates so they are tracked in git.
+# The root .gitignore excludes all build/ dirs; this overrides it for
+# this directory only.
+!build/
+!build/*.html
