@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -58,11 +58,15 @@ export function BuildingDetail() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); setAddRoomOpen(false); },
   });
 
-  const { register: regBldg, handleSubmit: hsBldg, formState: { errors: errBldg } } =
+  const { register: regBldg, handleSubmit: hsBldg, reset: resetBldg, formState: { errors: errBldg } } =
     useForm<BuildingInput>({
       resolver: zodResolver(buildingSchema),
       defaultValues: building ? { name: building.name, campus_id: building.campus_id, description: building.description } : undefined,
     });
+
+  useEffect(() => {
+    if (building) resetBldg({ name: building.name, campus_id: building.campus_id, description: building.description });
+  }, [building]);
 
   const { register: regRoom, handleSubmit: hsRoom, formState: { errors: errRoom } } =
     useForm<RoomInput>({
@@ -134,6 +138,7 @@ export function BuildingDetail() {
 
       <SlideOver open={editOpen} onOpenChange={setEditOpen} title="Edit Building">
         <form onSubmit={hsBldg((d) => updateMut.mutate(d))} className="space-y-4">
+          <input type="hidden" {...regBldg("campus_id")} />
           <div className="space-y-1">
             <label className="text-sm font-medium text-gray-700">Name *</label>
             <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" {...regBldg("name")} />
@@ -151,6 +156,7 @@ export function BuildingDetail() {
 
       <SlideOver open={addRoomOpen} onOpenChange={setAddRoomOpen} title="Add Room">
         <form onSubmit={hsRoom((d) => createRoomMut.mutate(d))} className="space-y-4">
+          <input type="hidden" {...regRoom("building_id")} />
           <div className="space-y-1">
             <label className="text-sm font-medium text-gray-700">Name *</label>
             <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" {...regRoom("name")} />

@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Pencil, Trash2, Download, RefreshCw } from "lucide-react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -68,10 +68,14 @@ export function RoomDetail() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); navigate("/rooms"); },
   });
 
-  const { register, handleSubmit, formState: { errors } } = useForm<RoomInput>({
+  const { register, handleSubmit, reset, formState: { errors } } = useForm<RoomInput>({
     resolver: zodResolver(roomSchema),
     defaultValues: room ? { name: room.name, building_id: room.building_id, description: room.description } : undefined,
   });
+
+  useEffect(() => {
+    if (room) reset({ name: room.name, building_id: room.building_id, description: room.description });
+  }, [room]);
 
   if (isLoading) return <PageSpinner />;
   if (!room) return <p className="text-sm text-gray-500">Room not found.</p>;
@@ -168,6 +172,7 @@ export function RoomDetail() {
 
       <SlideOver open={editOpen} onOpenChange={setEditOpen} title="Edit Room">
         <form onSubmit={handleSubmit((d) => updateMut.mutate(d))} className="space-y-4">
+          <input type="hidden" {...register("building_id")} />
           <div className="space-y-1">
             <label className="text-sm font-medium text-gray-700">Name *</label>
             <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" {...register("name")} />
