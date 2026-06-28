@@ -12,7 +12,7 @@ COPY . .
 # Build for the current platform
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /pingsvc ./cmd/pingsvc
 # Runtime stage
-FROM alpine:3.18
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates bash
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
