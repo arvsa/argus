@@ -133,9 +133,11 @@ Every feature follows a strict TDD loop — no exceptions:
 
 ## Feature Branch Workflow
 
-**Before touching any file, always create a branch first. No exceptions.**
+**Before touching any file, always checkout to main and get the latest changes from remote and create a branch first. No exceptions.**
 
 ```bash
+git checkout main
+git pull
 git checkout -b /
 # e.g. git checkout -b feature/add-device-filter
 #      git checkout -b fix/ws-reconnect-loop
