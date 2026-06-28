@@ -17,11 +17,23 @@ A network device monitoring system. It continuously pings thousands of devices a
 **Prerequisites**: Docker and Docker Compose.
 
 ```bash
-# Clone and start
+# 1. Copy and configure environment
+cp .env.example .env          # then edit .env with your secrets
+
+# 2. Generate ping targets BEFORE starting Docker
+#    (must exist as a file before docker compose runs, or Docker creates a directory there)
+./pingsvc/generate_targets.sh
+
+# 3. Start the backend stack
 docker compose watch backend
+
+# 4. Start the ping service (separate step, requires targets.txt from step 2)
+docker compose up pingsvc -d
 ```
 
-Local URLs:
+> **Note (Apple Silicon):** The Dockerfile is multi-platform and builds natively for ARM64. No extra flags needed.
+
+Local URLs once running:
 
 - Backend API: http://localhost:8000
 - API docs (Swagger): http://localhost:8000/docs
@@ -45,7 +57,7 @@ The Docker stack keeps running for MySQL and Redis; only the backend switches to
 ### Running pingsvc locally
 
 ```bash
-# Generate dummy targets
+# Generate dummy targets (run from repo root — writes to pingsvc/targets.txt)
 ./pingsvc/generate_targets.sh
 
 # Build and run
@@ -53,6 +65,8 @@ cd pingsvc
 go build -o pingsvc ./cmd/pingsvc
 ./pingsvc -redis localhost:6379 -targets targets.txt
 ```
+
+> **Gotcha:** If you start pingsvc via Docker before `targets.txt` exists, Docker will create a directory at that path instead of a file. If this happens, stop the container, `rmdir pingsvc/targets.txt`, generate the file, then `docker compose up pingsvc -d --force-recreate`.
 
 ### Lint and format (backend)
 
@@ -117,7 +131,7 @@ alembic upgrade head
 
 The stack uses **Traefik** as a reverse proxy and supports Docker Compose deployment to a Linux server. CI/CD is configured via GitHub Actions:
 
-- Push to `master` → deploys to **staging**
+- Push to `main` → deploys to **staging**
 - Publish a GitHub release → deploys to **production**
 
 See [deployment.md](deployment.md) for the full Traefik setup and required GitHub secrets.

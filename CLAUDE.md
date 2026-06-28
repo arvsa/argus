@@ -133,16 +133,21 @@ Every feature follows a strict TDD loop — no exceptions:
 
 ## Feature Branch Workflow
 
-For every new feature:
+**Before touching any file, always create a branch first. No exceptions.**
 
-1. Create a branch: `git checkout -b feature/<short-description>`
-2. Implement the feature following the TDD loop above
-3. Run `./scripts/test.sh` — do not proceed if tests fail
-4. Stage and commit: `git add -A && git commit -m "<description>"`
-5. Push: `git push origin feature/<short-description>`
-6. Open a PR to `main`:
+```bash
+git checkout -b /
+# e.g. git checkout -b feature/add-device-filter
+#      git checkout -b fix/ws-reconnect-loop
+```or every new change. (ex, feature, bugfix, etc..):
 
-7. Stop — do not merge the PR. A human reviews and merges.
 
-**Never push directly to `main`.**
+w this loop:
 
+1. Implement the change following the TDD loop above
+2. Run `./scripts/test.sh` — do not proceed if tests fail
+3. Stage and commit: `git add -A && git commit -m "<description>"`
+4. Push: `git push origin <branch-name>`
+5. Open a PR to `main` — then stop. Do not merge.
+
+**Never commit directly to `main`. Never start work without a branch.**

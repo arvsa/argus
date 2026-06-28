@@ -27,24 +27,22 @@ If no targets file is provided, it defaults to pinging `8.8.8.8` and `1.1.1.1`.
 
 ### Running with Docker Compose
 
-You can generate dummy targets by running
+Run these commands from the **repo root**:
 
 ```bash
-chmod +x pingsvc/generate_targets.sh
+# Generate targets first — must exist as a file before Docker starts
 ./pingsvc/generate_targets.sh
-```
-Then run: 
 
-```bash
+# Start pingsvc (also starts redis if not already running)
 docker compose up pingsvc -d
 ```
 
-Auto starts the redis but does not destroy it!
+> **Gotcha:** If `pingsvc/targets.txt` doesn't exist when Docker starts, Docker creates a directory there instead of a file. The service will start but log `0 targets`. Fix: stop the container, `rmdir pingsvc/targets.txt`, generate the file, then `docker compose up pingsvc -d --force-recreate`.
 
 ### Redis Events
 
 To subscribe to ping events in real-time:
-Í
+
 ```bash
 docker compose exec redis redis-cli
 
