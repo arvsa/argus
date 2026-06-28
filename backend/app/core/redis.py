@@ -41,6 +41,16 @@ def get_async_redis_client() -> aioredis.Redis:
     return _async_redis
 
 
+class RedisManager:
+    @classmethod
+    def get_sync_client(cls) -> redis.Redis:
+        return get_sync_redis_client()
+
+    @classmethod
+    def get_async_client(cls) -> aioredis.Redis:
+        return get_async_redis_client()
+
+
 async def redis_listener_task(stop_event: asyncio.Event):
     """
     Background task: subscribe to CHANNEL and forward messages to connected websockets.
