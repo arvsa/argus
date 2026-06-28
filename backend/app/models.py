@@ -147,6 +147,7 @@ class BuildingUpdate(SQLModel):
 class BuildingPublic(BuildingBase):
     id: uuid.UUID
     created_at: datetime | None = None
+    campus_id: uuid.UUID
 
 class BuildingsPublic(SQLModel):
     data: list[BuildingPublic]
@@ -175,6 +176,7 @@ class RoomsUpdate(SQLModel):
 class RoomPublic(RoomBase):
     id: uuid.UUID
     created_at: datetime | None = None
+    building_id: uuid.UUID
 
 class RoomsPublic(SQLModel):
     data: list[RoomPublic]
@@ -194,6 +196,7 @@ class DeviceCreate(DeviceBase):
 class DevicePublic(DeviceBase):
     id: uuid.UUID
     created_at: datetime | None = None
+    room_id: uuid.UUID | None = None
 
 class DevicesPublic(SQLModel):
     data: list[DevicePublic]
@@ -223,7 +226,7 @@ class Building(BuildingBase, table=True):
         foreign_key="campus.id", nullable=False, ondelete="CASCADE"
     )
     campus: "Campus" = Relationship(back_populates="buildings")
-    rooms: list["Room"] = Relationship(back_populates="building")
+    rooms: list["Room"] = Relationship(back_populates="building", cascade_delete=True)
 
 class Campus(CampusBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
@@ -243,7 +246,7 @@ class Room(RoomBase, table=True):
         foreign_key="building.id", nullable=False, ondelete="CASCADE"
     )
     building: "Building" = Relationship(back_populates="rooms")
-    devices: list["Device"] = Relationship(back_populates="room")
+    devices: list["Device"] = Relationship(back_populates="room", cascade_delete=True)
 
 
 class Device(DeviceBase, table=True):
