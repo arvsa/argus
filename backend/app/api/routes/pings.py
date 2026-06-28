@@ -6,6 +6,25 @@ from fastapi.responses import JSONResponse
 from app.core.broadcast import broadcaster
 from app.core.redis import get_sync_redis_client
 
+def _count_stats(redis) -> dict:
+    """Scan pings:state and tally up/down counts without loading all payloads."""
+    total = up = down = 0
+    cursor = 0
+    while True:
+        cursor, batch = redis.hscan("pings:state", cursor=cursor, count=500)
+        for raw in batch.values():
+            total += 1
+            try:
+                if json.loads(raw).get("ok"):
+                    up += 1
+                else:
+                    down += 1
+            except Exception:
+                pass
+        if cursor == 0:
+            break
+    return {"total": total, "up": up, "down": down}
+
 router = APIRouter(prefix="", tags=["ping"])  # prefix kept empty so paths are /ws/pings and /api/v1/state
 
 
@@ -22,6 +41,13 @@ async def ws_pings(ws: WebSocket):
             await ws.receive_text()
     except WebSocketDisconnect:
         broadcaster.disconnect(ws)
+
+
+@router.get("/stats")
+def get_stats():
+    """Aggregate up/down counts across all devices in Redis."""
+    redis = get_sync_redis_client()
+    return JSONResponse(_count_stats(redis))
 
 
 @router.get("/state")

@@ -61,6 +61,7 @@ class User(UserBase, table=True):
 class UserPublic(UserBase):
     id: uuid.UUID
     created_at: datetime | None = None
+    email: str  # override: don't re-validate stored addresses on read
 
 
 class UsersPublic(SQLModel):
@@ -222,7 +223,6 @@ class Building(BuildingBase, table=True):
         foreign_key="campus.id", nullable=False, ondelete="CASCADE"
     )
     campus: "Campus" = Relationship(back_populates="buildings")
-    floors: list["Floor"] = Relationship(back_populates="building", cascade_delete=True)
     rooms: list["Room"] = Relationship(back_populates="building")
 
 class Campus(CampusBase, table=True):
@@ -233,20 +233,6 @@ class Campus(CampusBase, table=True):
     )
     buildings: list["Building"] = Relationship(back_populates="campus", cascade_delete=True)
 
-class Floor(SQLModel, table=True):
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    name: str = Field(max_length=10)
-    created_at: datetime | None = Field(
-        default_factory=get_datetime_utc,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-    building_id: uuid.UUID = Field(
-        foreign_key="building.id", nullable=False, ondelete="CASCADE"
-    )
-    building: "Building" = Relationship(back_populates="floors")
-    rooms: list["Room"] = Relationship(back_populates="floor", cascade_delete=True)
-
-
 class Room(RoomBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     created_at: datetime | None = Field(
@@ -256,11 +242,7 @@ class Room(RoomBase, table=True):
     building_id: uuid.UUID = Field(
         foreign_key="building.id", nullable=False, ondelete="CASCADE"
     )
-    floor_id: uuid.UUID | None = Field(
-        default=None, foreign_key="floor.id", nullable=True, ondelete="CASCADE"
-    )
     building: "Building" = Relationship(back_populates="rooms")
-    floor: "Floor" = Relationship(back_populates="rooms")
     devices: list["Device"] = Relationship(back_populates="room")
 
 
