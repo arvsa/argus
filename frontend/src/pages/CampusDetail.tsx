@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -51,20 +51,24 @@ export function CampusDetail() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["buildings"] }); setAddBldgOpen(false); },
   });
 
-  if (campusLoading) return <PageSpinner />;
-  if (!campus) return <p className="text-sm text-gray-500">Campus not found.</p>;
-
-  const { register: regCampus, handleSubmit: hsCampus, formState: { errors: errCampus } } =
+  const { register: regCampus, handleSubmit: hsCampus, reset: resetCampus, formState: { errors: errCampus } } =
     useForm<CampusInput>({
       resolver: zodResolver(campusSchema),
-      defaultValues: { name: campus.name, description: campus.description },
+      defaultValues: { name: campus?.name, description: campus?.description },
     });
+
+  useEffect(() => {
+    if (campus) resetCampus({ name: campus.name, description: campus.description });
+  }, [campus]);
 
   const { register: regBldg, handleSubmit: hsBldg, formState: { errors: errBldg } } =
     useForm<BuildingInput>({
       resolver: zodResolver(buildingSchema),
       defaultValues: { campus_id: id },
     });
+
+  if (campusLoading) return <PageSpinner />;
+  if (!campus) return <p className="text-sm text-gray-500">Campus not found.</p>;
 
   return (
     <div className="space-y-6">
@@ -154,6 +158,7 @@ export function CampusDetail() {
 
       <SlideOver open={addBldgOpen} onOpenChange={setAddBldgOpen} title="Add Building">
         <form onSubmit={hsBldg((d) => createBldgMut.mutate(d))} className="space-y-4">
+          <input type="hidden" {...regBldg("campus_id")} />
           <div className="space-y-1">
             <label className="text-sm font-medium text-gray-700">Name *</label>
             <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20" {...regBldg("name")} />
