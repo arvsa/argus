@@ -3,9 +3,6 @@ Redis key-integrity tests for device create / update / delete.
 
 Requires a live Redis and DB (runs inside Docker via `docker compose exec backend pytest`).
 Each test verifies that members:room:<room_id> stays consistent with the DB.
-
-Note: the container's data model has Campus → Building → Floor → Room. There is no
-/floors API route yet, so floors are created directly via the DB session fixture.
 """
 import uuid
 
@@ -14,8 +11,8 @@ from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.redis import RedisManager
-from app.models import Building, Campus, Floor, Room
-from tests.utils.utils import get_superuser_token_headers, random_lower_string
+from tests.utils.hierarchy import seed_hierarchy
+from tests.utils.utils import get_superuser_token_headers
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -25,40 +22,8 @@ def _superuser_headers(client: TestClient) -> dict[str, str]:
 
 
 def _seed_room(client: TestClient, headers: dict[str, str], db: Session) -> uuid.UUID:
-    """
-    Create Campus → Building → Floor → Room entirely via DB.
-    The container's RoomCreate model omits floor_id while Room requires it,
-    making room creation through the API impossible until that schema is fixed.
-    """
-    suffix = random_lower_string()[:8]
-
-    # Roll back any failed transaction from a prior test before writing new data.
-    try:
-        db.rollback()
-    except Exception:
-        pass
-
-    campus = Campus(name=f"campus-{suffix}")
-    db.add(campus)
-    db.commit()
-    db.refresh(campus)
-
-    building = Building(name=f"bldg-{suffix}", campus_id=campus.id)
-    db.add(building)
-    db.commit()
-    db.refresh(building)
-
-    # Floor.name is varchar(10) NOT NULL in the DB despite the model marking it optional.
-    floor = Floor(name="testfloor", building_id=building.id)
-    db.add(floor)
-    db.commit()
-    db.refresh(floor)
-
-    room = Room(name=f"room-{suffix}", building_id=building.id, floor_id=floor.id)
-    db.add(room)
-    db.commit()
-    db.refresh(room)
-
+    """Create Campus → Building → Room and return the room id."""
+    _, _, room = seed_hierarchy(db)
     return room.id
 
 
