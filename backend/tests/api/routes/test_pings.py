@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.redis import RedisManager
 from tests.utils.utils import get_superuser_token_headers
 
-_TS = 1700000000000
+_TS = 9_999_999_999_999  # far-future score so ZREVRANGE always returns it first
 _ADDR_STATE = "192.0.2.210"
 
 

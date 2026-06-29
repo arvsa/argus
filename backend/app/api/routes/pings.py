@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 
+from app.api.deps import CurrentUser
 from app.core.broadcast import broadcaster
 from app.core.redis import get_sync_redis_client
 
@@ -25,7 +26,7 @@ async def ws_pings(ws: WebSocket):
 
 
 @router.get("/state")
-def get_state(page: int = Query(1, ge=1), size: int = Query(100, ge=1, le=1000)):
+def get_state(current_user: CurrentUser, page: int = Query(1, ge=1), size: int = Query(100, ge=1, le=1000)):
     """
     Offset pagination backed by a Redis sorted set index "pings:index".
     Assumes your writer does:
@@ -62,7 +63,7 @@ def get_state(page: int = Query(1, ge=1), size: int = Query(100, ge=1, le=1000))
 
 
 @router.get("/state_scan")
-def get_state_scan(cursor: int = Query(0, ge=0), count: int = Query(100, ge=1, le=1000)):
+def get_state_scan(current_user: CurrentUser, cursor: int = Query(0, ge=0), count: int = Query(100, ge=1, le=1000)):
     """
     Cursor-based, HSCAN-driven pagination. Unordered and eventually-consistent.
     Returns: {"cursor": <next>, "items": [...]}
