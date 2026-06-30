@@ -27,6 +27,7 @@ jobs:
       DOCKER_IMAGE_BACKEND: argus-backend
       DOCKER_IMAGE_PINGSVC: argus-pingsvc
       REDIS_URL: redis://localhost:6379/0
+      EMAILS_FROM_EMAIL: noreply@example.com
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -49,6 +50,7 @@ jobs:
           DOCKER_IMAGE_BACKEND=argus-backend
           DOCKER_IMAGE_PINGSVC=argus-pingsvc
           REDIS_URL=redis://localhost:6379/0
+          EMAILS_FROM_EMAIL=noreply@example.com
           EOF
       - run: docker compose down -v --remove-orphans
       - run: docker compose up -d db redis
