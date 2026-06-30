@@ -50,6 +50,11 @@ services:
     ports:
       - "3306:3306"
 
+  redis:
+    restart: "no"
+    ports:
+      - "6379:6379"
+
   adminer:
     restart: "no"
     ports:
