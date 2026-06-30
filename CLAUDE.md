@@ -148,8 +148,9 @@ w this loop:
 
 1. Implement the change following the TDD loop above
 2. Run `./scripts/test.sh` — do not proceed if tests fail
-3. Stage and commit: `git add -A && git commit -m "<description>"`
-4. Push: `git push origin <branch-name>`
-5. Open a PR to `main` — then stop. Do not merge.
+3. **Stop and show the user the changes (diff). Wait for the user to explicitly accept before committing — do not commit on your own judgment that the change looks done.**
+4. Once accepted: stage and commit: `git add -A && git commit -m "<description>"`
+5. Push: `git push origin <branch-name>`
+6. Open a PR to `main` — then stop. Do not merge.
 
-**Never commit directly to `main`. Never start work without a branch.**
+**Never commit directly to `main`. Never start work without a branch. Never commit before the user has reviewed and accepted the changes.**
