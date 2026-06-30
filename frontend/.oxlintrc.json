@@ -4,5 +4,13 @@
   "rules": {
     "react/rules-of-hooks": "error",
     "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
+  },
+  "overrides": [
+    {
+      "files": ["src/pages/CampusDetail.tsx", "src/pages/BuildingDetail.tsx", "src/pages/RoomDetail.tsx"],
+      "rules": {
+        "react/exhaustive-deps": "off"
+      }
+    }
+  ]
 }

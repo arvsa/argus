@@ -11,6 +11,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 function CampusForm({
@@ -62,7 +64,9 @@ export function Campuses() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Campus | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const errorToast = useApiErrorToast();
+
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["campuses"],
     queryFn: () => getCampuses(),
   });
@@ -70,16 +74,19 @@ export function Campuses() {
   const createMut = useMutation({
     mutationFn: createCampus,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["campuses"] }); setCreateOpen(false); },
+    onError: errorToast("Couldn't create campus"),
   });
 
   const updateMut = useMutation({
     mutationFn: (d: CampusInput) => updateCampus(editTarget!.id, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["campuses"] }); setEditTarget(null); },
+    onError: errorToast("Couldn't save campus"),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteCampus,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["campuses"] }),
+    onError: errorToast("Couldn't delete campus"),
   });
 
   return (
@@ -101,6 +108,8 @@ export function Campuses() {
 
       {isLoading ? (
         <PageSpinner />
+      ) : isError ? (
+        <ErrorState message="Couldn't load campuses." onRetry={() => refetch()} />
       ) : !data?.data.length ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-gray-300 py-16 text-gray-400">
           <MapPin className="h-10 w-10" />

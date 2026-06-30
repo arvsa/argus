@@ -14,6 +14,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HierarchyBreadcrumb } from "@/components/HierarchyBreadcrumb";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 export function BuildingDetail() {
@@ -36,7 +38,9 @@ export function BuildingDetail() {
     enabled: !!building?.campus_id,
   });
 
-  const { data: roomsData } = useQuery({
+  const errorToast = useApiErrorToast();
+
+  const { data: roomsData, isLoading: roomsLoading, isError: roomsError, refetch: refetchRooms } = useQuery({
     queryKey: ["rooms"],
     queryFn: () => getRooms(),
   });
@@ -46,16 +50,19 @@ export function BuildingDetail() {
   const updateMut = useMutation({
     mutationFn: (d: BuildingInput) => updateBuilding(id!, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["building", id] }); setEditOpen(false); },
+    onError: errorToast("Couldn't save building"),
   });
 
   const deleteMut = useMutation({
     mutationFn: () => deleteBuilding(id!),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["buildings"] }); navigate("/buildings"); },
+    onError: errorToast("Couldn't delete building"),
   });
 
   const createRoomMut = useMutation({
     mutationFn: createRoom,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); setAddRoomOpen(false); },
+    onError: errorToast("Couldn't create room"),
   });
 
   const { register: regBldg, handleSubmit: hsBldg, reset: resetBldg, formState: { errors: errBldg } } =
@@ -64,6 +71,9 @@ export function BuildingDetail() {
       defaultValues: building ? { name: building.name, campus_id: building.campus_id, description: building.description } : undefined,
     });
 
+  // `resetBldg` is react-hook-form's reset function: its identity is stable for the lifetime
+  // of this useForm() call, so omitting it from the deps array below is safe (this file is
+  // exempted from react/exhaustive-deps in .oxlintrc.json for that reason).
   useEffect(() => {
     if (building) resetBldg({ name: building.name, campus_id: building.campus_id, description: building.description });
   }, [building]);
@@ -85,7 +95,7 @@ export function BuildingDetail() {
           campus ? { label: campus.name, to: `/campuses/${campus.id}` } : { label: "…" },
           { label: building.name },
         ]} />
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
           <h1 className="text-xl font-semibold text-gray-900">{building.name}</h1>
           {user?.is_superuser && (
             <div className="flex items-center gap-2">
@@ -116,7 +126,9 @@ export function BuildingDetail() {
           )}
         </div>
 
-        {buildingRooms.length === 0 ? (
+        {roomsLoading ? <PageSpinner /> : roomsError ? (
+          <ErrorState message="Couldn't load rooms." onRetry={() => refetchRooms()} />
+        ) : buildingRooms.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 py-12 text-gray-400">
             <Monitor className="h-8 w-8" />
             <p className="text-sm">No rooms yet</p>

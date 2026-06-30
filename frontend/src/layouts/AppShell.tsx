@@ -152,7 +152,7 @@ export function AppShell() {
       {/* Desktop sidebar */}
       <aside
         className={cn(
-          "hidden md:flex flex-col border-r border-gray-200 bg-white transition-all duration-200 shrink-0",
+          "relative hidden md:flex flex-col border-r border-gray-200 bg-white transition-all duration-200 shrink-0",
           collapsed ? "w-16" : "w-56"
         )}
       >

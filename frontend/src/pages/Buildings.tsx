@@ -12,6 +12,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 function BuildingForm({
@@ -60,7 +62,9 @@ export function Buildings() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Building | null>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ["buildings"], queryFn: () => getBuildings() });
+  const errorToast = useApiErrorToast();
+
+  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ["buildings"], queryFn: () => getBuildings() });
   const { data: campusesData } = useQuery({ queryKey: ["campuses"], queryFn: () => getCampuses() });
   const campuses = campusesData?.data ?? [];
 
@@ -69,16 +73,19 @@ export function Buildings() {
   const createMut = useMutation({
     mutationFn: createBuilding,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["buildings"] }); setCreateOpen(false); },
+    onError: errorToast("Couldn't create building"),
   });
 
   const updateMut = useMutation({
     mutationFn: (d: BuildingInput) => updateBuilding(editTarget!.id, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["buildings"] }); setEditTarget(null); },
+    onError: errorToast("Couldn't save building"),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteBuilding,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["buildings"] }),
+    onError: errorToast("Couldn't delete building"),
   });
 
   return (
@@ -95,7 +102,9 @@ export function Buildings() {
         }
       />
 
-      {isLoading ? <PageSpinner /> : !data?.data.length ? (
+      {isLoading ? <PageSpinner /> : isError ? (
+        <ErrorState message="Couldn't load buildings." onRetry={() => refetch()} />
+      ) : !data?.data.length ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gray-300 py-16 text-gray-400">
           <Building2 className="h-10 w-10" />
           <p className="text-sm">No buildings yet</p>

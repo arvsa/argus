@@ -18,7 +18,9 @@ import { CsvUploader } from "@/components/CsvUploader";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
 import { useExport } from "@/hooks/useExport";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 function DeviceForm({ defaultValues, onSubmit, loading, rooms }: {
@@ -68,9 +70,10 @@ export function Devices() {
   const [uploadDryRun, setUploadDryRun] = useState<{ data: unknown[]; count: number } | null>(null);
   const [page, setPage] = useState(1);
   const { exportCsv } = useExport();
+  const errorToast = useApiErrorToast();
   const deviceStates = useWsStore((s) => s.deviceStates);
 
-  const { data: devicesData, isLoading } = useQuery({
+  const { data: devicesData, isLoading, isError, refetch } = useQuery({
     queryKey: ["devices", page],
     queryFn: () => getDevices((page - 1) * 100, 100),
   });
@@ -88,21 +91,25 @@ export function Devices() {
   const createMut = useMutation({
     mutationFn: createDevice,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["devices"] }); setCreateOpen(false); },
+    onError: errorToast("Couldn't create device"),
   });
 
   const updateMut = useMutation({
     mutationFn: (d: DeviceInput) => updateDevice(editTarget!.id, { ip_address: d.ip_address, hostname: d.hostname, room_id: d.room_id, description: d.description }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["devices"] }); setEditTarget(null); },
+    onError: errorToast("Couldn't save device"),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteDevice,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["devices"] }),
+    onError: errorToast("Couldn't delete device"),
   });
 
   const uploadMut = useMutation({
     mutationFn: (file: File) => uploadDevicesCsv(file, true),
     onSuccess: (d) => setUploadDryRun(d),
+    onError: errorToast("CSV validation failed"),
   });
 
   const commitMut = useMutation({
@@ -112,6 +119,7 @@ export function Devices() {
       setUploadOpen(false);
       setUploadDryRun(null);
     },
+    onError: errorToast("CSV import failed"),
   });
 
   const stateItems = stateData?.items ?? [];
@@ -137,7 +145,7 @@ export function Devices() {
         title="Devices"
         description={`${totalDevices} device${totalDevices !== 1 ? "s" : ""} total`}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={handleExport} className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
               <Download className="h-4 w-4" /> Export
             </button>
@@ -155,7 +163,9 @@ export function Devices() {
         }
       />
 
-      {isLoading ? <PageSpinner /> : devices.length === 0 ? (
+      {isLoading ? <PageSpinner /> : isError ? (
+        <ErrorState message="Couldn't load devices." onRetry={() => refetch()} />
+      ) : devices.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gray-300 py-16 text-gray-400">
           <Activity className="h-10 w-10" />
           <p className="text-sm">No devices yet</p>

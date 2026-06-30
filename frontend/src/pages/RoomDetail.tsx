@@ -15,7 +15,9 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HierarchyBreadcrumb } from "@/components/HierarchyBreadcrumb";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
 import { useExport } from "@/hooks/useExport";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate, formatTimestamp } from "@/lib/utils";
 
 export function RoomDetail() {
@@ -45,7 +47,7 @@ export function RoomDetail() {
     enabled: !!building?.campus_id,
   });
 
-  const { data: states, isLoading: statesLoading, refetch } = useQuery({
+  const { data: states, isLoading: statesLoading, isError: statesError, refetch } = useQuery({
     queryKey: ["room-states", id],
     queryFn: () => getRoomStates(id!),
     enabled: !!id,
@@ -58,14 +60,18 @@ export function RoomDetail() {
     return { ...d, ok };
   });
 
+  const errorToast = useApiErrorToast();
+
   const updateMut = useMutation({
     mutationFn: (d: RoomInput) => updateRoom(id!, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["room", id] }); setEditOpen(false); },
+    onError: errorToast("Couldn't save room"),
   });
 
   const deleteMut = useMutation({
     mutationFn: () => deleteRoom(id!),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); navigate("/rooms"); },
+    onError: errorToast("Couldn't delete room"),
   });
 
   const { register, handleSubmit, reset, formState: { errors } } = useForm<RoomInput>({
@@ -73,6 +79,9 @@ export function RoomDetail() {
     defaultValues: room ? { name: room.name, building_id: room.building_id, description: room.description } : undefined,
   });
 
+  // `reset` is react-hook-form's reset function: its identity is stable for the lifetime of
+  // this useForm() call, so omitting it from the deps array below is safe (this file is
+  // exempted from react/exhaustive-deps in .oxlintrc.json for that reason).
   useEffect(() => {
     if (room) reset({ name: room.name, building_id: room.building_id, description: room.description });
   }, [room]);
@@ -139,7 +148,9 @@ export function RoomDetail() {
         </span>
       </div>
 
-      {statesLoading ? <PageSpinner /> : (
+      {statesLoading ? <PageSpinner /> : statesError ? (
+        <ErrorState message="Couldn't load device states." onRetry={() => refetch()} />
+      ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">

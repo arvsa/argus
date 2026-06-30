@@ -13,6 +13,7 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageSpinner } from "@/components/Spinner";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate, formatTimestamp } from "@/lib/utils";
 
 export function DeviceDetail() {
@@ -35,14 +36,18 @@ export function DeviceDetail() {
 
   const liveState = device ? deviceStates[device.ip_address] : null;
 
+  const errorToast = useApiErrorToast();
+
   const updateMut = useMutation({
     mutationFn: (d: DeviceInput) => updateDevice(id!, { ip_address: d.ip_address, hostname: d.hostname, room_id: d.room_id }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["device", id] }); setEditOpen(false); },
+    onError: errorToast("Couldn't save device"),
   });
 
   const deleteMut = useMutation({
     mutationFn: () => deleteDevice(id!),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["devices"] }); navigate("/devices"); },
+    onError: errorToast("Couldn't delete device"),
   });
 
   const { register, handleSubmit, formState: { errors } } = useForm<DeviceInput>({
@@ -55,7 +60,7 @@ export function DeviceDetail() {
 
   return (
     <div className="max-w-xl space-y-6">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="font-mono text-xl font-semibold text-gray-900">{device.ip_address}</h1>
         <div className="flex items-center gap-2">
           {user?.is_superuser && (
