@@ -8,6 +8,7 @@ A network device monitoring system. It continuously pings thousands of devices a
 |---|---|
 | **backend** | FastAPI REST API + WebSocket server (Python) |
 | **pingsvc** | Concurrent ICMP ping daemon (Go) |
+| **frontend** | React + Vite + TypeScript dashboard |
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend |
 | **adminer** | Database web UI |
@@ -68,6 +69,16 @@ go build -o pingsvc ./cmd/pingsvc
 
 > **Gotcha:** If you start pingsvc via Docker before `targets.txt` exists, Docker will create a directory at that path instead of a file. If this happens, stop the container, `rmdir pingsvc/targets.txt`, generate the file, then `docker compose up pingsvc -d --force-recreate`.
 
+### Running the frontend locally
+
+```bash
+cd frontend
+npm install
+npm run dev      # dev server at :5173, proxies API calls to the backend
+```
+
+> **Known issue:** `frontend/Dockerfile` does not exist yet, even though `compose.override.yml` references one. `docker compose build` for the full stack will fail until it's added — run the frontend with `npm run dev` locally instead, or build/run `db`, `redis`, `prestart`, and `backend` individually (see [scripts/test.sh](scripts/test.sh) for the exact commands CI uses).
+
 ### Lint and format (backend)
 
 ```bash
@@ -76,19 +87,38 @@ bash scripts/lint.sh     # mypy + ruff check + ruff format --check
 bash scripts/format.sh   # auto-fix with ruff
 ```
 
-### Tests (backend)
+### Tests
+
+**backend** (requires DB + Redis running):
 
 ```bash
 # Full run in Docker
 ./scripts/test.sh
 
-# Or locally (requires DB + Redis running)
+# Or locally
 cd backend
 coverage run -m pytest tests/
 coverage report
 
 # Single test
 pytest tests/api/routes/test_login.py::test_login_access_token_correct
+```
+
+**pingsvc**:
+
+```bash
+cd pingsvc
+go vet ./...
+go test ./...
+```
+
+**frontend**:
+
+```bash
+cd frontend
+npm run test    # vitest
+npm run lint    # oxlint
+npm run build   # tsc -b && vite build
 ```
 
 ## Environment Variables
@@ -127,12 +157,14 @@ alembic revision --autogenerate -m "describe the change"
 alembic upgrade head
 ```
 
-## Deployment
+## CI/CD
 
-The stack uses **Traefik** as a reverse proxy and supports Docker Compose deployment to a Linux server. CI/CD is configured via GitHub Actions:
+Every push/PR runs three independent GitHub Actions workflows: **Test Backend** (pytest), **Test pingsvc** (`go vet` + `go test`), and **Test Frontend** (oxlint + `tsc` + vitest).
 
-- Push to `main` → deploys to **staging**
-- Publish a GitHub release → deploys to **production**
+The stack uses **Traefik** as a reverse proxy and supports Docker Compose deployment to a Linux server:
+
+- Push to `main` → **Deploy to Staging**, but only after all three test workflows have succeeded for that exact commit (gated via `workflow_run`, checked with `gh run list --commit`). Runs on a self-hosted `staging` runner.
+- Publish a GitHub release → deploys to **production**. Runs on a self-hosted `production` runner.
 
 See [deployment.md](deployment.md) for the full Traefik setup and required GitHub secrets.
 
@@ -150,3 +182,16 @@ To subscribe to live ping events:
 docker compose exec redis redis-cli
 SUBSCRIBE pings:events
 ```
+
+## Logs
+
+```bash
+docker compose logs -f backend          # tail one service
+docker compose logs -f backend pingsvc  # tail multiple services at once
+docker compose logs -f                  # tail everything
+
+docker compose logs --tail=200 -f backend   # last 200 lines, then follow
+docker compose logs --since=10m -f backend  # only the last 10 minutes, then follow
+```
+
+`docker compose watch backend` (used in Quick Start) also streams the container's logs live to your terminal for as long as it's running, in addition to syncing code changes for hot reload — useful when you want logs *and* live-reload in one command rather than a separate `logs -f`.
