@@ -113,6 +113,44 @@ type Target struct {
 	BldgID string
 }
 
+// evalArgs builds the KEYS[1] address and ARGV list used by
+// publishIfChangedAndAggregateScript for a single event. Extracted so the
+// batcher's pipelined path and the single-shot publishAndAggregate path
+// (used directly in tests) can't drift out of sync with each other.
+func evalArgs(ev Event) (addr string, argv []any) {
+	newState := "0"
+	if ev.OK {
+		newState = "1"
+	}
+	raw, _ := json.Marshal(ev)
+	return ev.Addr, []any{newState, string(raw), ev.RoomID, ev.BldgID, strconv.FormatInt(ev.TS, 10)}
+}
+
+// loadPublishScript loads publishIfChangedAndAggregateScript into Redis and
+// returns its SHA1, for use with EVALSHA.
+func loadPublishScript(ctx context.Context, rdb redis.Cmdable) (string, error) {
+	return rdb.ScriptLoad(ctx, publishIfChangedAndAggregateScript).Result()
+}
+
+// publishAndAggregate atomically compares-and-sets a single device's state via
+// the publishIfChangedAndAggregateScript Lua script, updating the pings:state
+// snapshot, the pings:index sorted set, the per-room/building stats:* hash
+// counters, and publishing to the appropriate channel — but only if the
+// device's state actually changed since the last call for that address.
+//
+// rdb is a redis.Cmdable so it can be a *redis.Client in production or a
+// miniredis-backed client in tests. Returns true if the script published an
+// event (i.e. the state changed).
+func publishAndAggregate(ctx context.Context, rdb redis.Cmdable, sha string, ev Event) (bool, error) {
+	addr, argv := evalArgs(ev)
+	res, err := rdb.EvalSha(ctx, sha, []string{addr}, argv...).Result()
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.(int64)
+	return n == 1, nil
+}
+
 var stateCache sync.Map
 
 // Prometheus metrics
@@ -203,7 +241,7 @@ func main() {
 	}
 
 	// Load the Lua script into Redis and keep the SHA
-	sha, err := rdb.ScriptLoad(ctx, publishIfChangedAndAggregateScript).Result()
+	sha, err := loadPublishScript(ctx, rdb)
 	if err != nil {
 		log.Fatalf("failed to load lua script: %v", err)
 	}
@@ -342,21 +380,13 @@ func main() {
 			pipe := rdb.Pipeline()
 			resultsCmds := make([]*redis.Cmd, 0, len(buf))
 			for _, raw := range buf {
-				// extract address and aggregation fields
 				var ev Event
 				_ = json.Unmarshal(raw, &ev)
-				addr := ev.Addr
-				newState := "0"
-				if ev.OK {
-					newState = "1"
-				}
-				// ensure room/bldg args are strings (use empty string if not set)
-				roomID := ev.RoomID
-				bldgID := ev.BldgID
+				addr, argv := evalArgs(ev)
 
 				// EVALSHA returns integer 1 if publish occurred, 0 otherwise
 				// Queue the EvalSha call in the pipeline
-				cmd := pipe.EvalSha(context.Background(), sha, []string{addr}, newState, string(raw), roomID, bldgID, strconv.FormatInt(ev.TS, 10))
+				cmd := pipe.EvalSha(context.Background(), sha, []string{addr}, argv...)
 				resultsCmds = append(resultsCmds, cmd)
 			}
 
@@ -379,14 +409,8 @@ func main() {
 					for _, raw := range buf {
 						var ev Event
 						_ = json.Unmarshal(raw, &ev)
-						addr := ev.Addr
-						newState := "0"
-						if ev.OK {
-							newState = "1"
-						}
-						roomID := ev.RoomID
-						bldgID := ev.BldgID
-						pipe2.EvalSha(context.Background(), sha, []string{addr}, newState, string(raw), roomID, bldgID, strconv.FormatInt(ev.TS, 10))
+						addr, argv := evalArgs(ev)
+						pipe2.EvalSha(context.Background(), sha, []string{addr}, argv...)
 					}
 					_, err2 := pipe2.Exec(context.Background())
 					if err2 != nil {

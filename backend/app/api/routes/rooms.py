@@ -64,6 +64,8 @@ def create_room(
     """
     Create new room.
     """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     room = Room.model_validate(room_in)
     session.add(room)
     session.commit()
@@ -85,8 +87,8 @@ def update_room(
     room = session.get(Room, id)
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
-    # if not current_user.is_superuser and (room.owner_id != current_user.id):
-    #     raise HTTPException(status_code=403, detail="Not enough permissions")
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
 
     update_dict = room_in.model_dump(exclude_unset=True)
     room.sqlmodel_update(update_dict)
