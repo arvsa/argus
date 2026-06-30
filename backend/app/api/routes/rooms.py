@@ -1,6 +1,6 @@
 import json
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from sqlmodel import col, func, select
@@ -135,7 +135,10 @@ def read_room_states(
     # 3) Get members (sync)
     members_key = f"members:room:{id}"
     try:
-        addrs = redis.smembers(members_key)  # returns set() or list of strings if decode_responses=True
+        # get_sync_redis_client() is always synchronous; redis-py's stubs type
+        # smembers() as Awaitable[T] | T to also cover the async client, so
+        # narrow it explicitly here.
+        addrs = cast(set[str], redis.smembers(members_key))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"redis error: {e}")
 

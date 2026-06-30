@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from typing import Awaitable, cast
 
 import sentry_sdk
 from fastapi import FastAPI
@@ -43,7 +44,10 @@ async def lifespan(app: FastAPI):
     last_exc = None
     while asyncio.get_event_loop().time() < deadline:
         try:
-            await async_client.ping()
+            # async_client is genuinely redis.asyncio.Redis; redis-py's
+            # stubs type ping() as Awaitable[bool] | bool to also cover the
+            # sync client's shared command-mixin signature.
+            await cast(Awaitable[bool], async_client.ping())
             break
         except Exception as exc:
             last_exc = exc

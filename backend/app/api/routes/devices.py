@@ -156,8 +156,12 @@ async def bulk_upload(
         raise HTTPException(status_code=400, detail="Upload must be a .csv file")
 
     try:
-        # UploadFile.file is a SpooledTemporaryFile -> binary; wrap to text
-        text_stream = io.TextIOWrapper(file.file, encoding="utf-8", newline="")
+        # UploadFile.file is a SpooledTemporaryFile -> binary; wrap to text.
+        # Annotated as the common io.TextIOBase (matching _parse_csv's param
+        # type) since the except branch below falls back to io.StringIO.
+        text_stream: io.TextIOBase = io.TextIOWrapper(
+            file.file, encoding="utf-8", newline=""
+        )
     except Exception:
         content = file.file.read()
         text_stream = io.StringIO(content.decode("utf-8", errors="replace"))

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         list[AnyUrl] | str, BeforeValidator(parse_cors)
     ] = []
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def all_cors_origins(self) -> list[str]:
         return [str(origin).rstrip("/") for origin in self.BACKEND_CORS_ORIGINS] + [
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     REDIS_CHANNEL: str = "pings:events"
     REDIS_HASH: str = "pings:state"
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> MySQLDsn:  # Changed return type
         return MySQLDsn.build(
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
 
     EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = 48
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def emails_enabled(self) -> bool:
         return bool(self.SMTP_HOST and self.EMAILS_FROM_EMAIL)
@@ -100,8 +100,6 @@ class Settings(BaseSettings):
 
     ALLOWED_EXTENSIONS: set[str] = {".csv"}
     MAX_ROWS: int = 10_000  # optional limit to protect server; adjust as needed
-    ALLOWED_EXTENSIONS = {".csv"}
-    MAX_ROWS = 10_000  # optional limit to protect server; adjust as needed
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
