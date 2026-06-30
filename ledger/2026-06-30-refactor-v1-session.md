@@ -333,9 +333,11 @@ which doesn't exist in this environment — expected, not a bug).
 - `plan/refactor-v1-changes.md`: committed (had been sitting uncommitted
   in the working tree since being written earlier in the session).
 - `ledger/2026-06-30-refactor-v1-session.md`: this file.
-- `ledger/2026-06-30-session-summary-llm-memory.md`: a condensed,
+- `memory/2026-06-30-session-summary-llm-memory.md`: a condensed,
   structured summary of this session intended for loading as context in
-  future sessions.
+  future sessions. Kept in a separate `memory/` folder rather than
+  `ledger/`, since `ledger/` is reference-only and this one's purpose is
+  to be fed to an LLM as context.
 
 ## All files touched this session, by branch/PR
 
