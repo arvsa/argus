@@ -1,12 +1,46 @@
 name: Deploy to Staging
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - Test Backend
+      - Test pingsvc
+      - Test Frontend
+    types:
+      - completed
     branches:
       - main
 
 jobs:
+  check-ci-status:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    permissions:
+      actions: read
+    steps:
+      - name: Verify all required workflows passed for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # workflow_run fires independently per listed workflow, not once
+          # all of them complete - so explicitly check every required
+          # workflow's latest conclusion for this exact commit before
+          # treating CI as green.
+          required=("Test Backend" "Test pingsvc" "Test Frontend")
+          for name in "${required[@]}"; do
+            conclusion=$(gh run list --repo "$REPO" --commit "$SHA" --json name,conclusion \
+              --jq ".[] | select(.name == \"$name\") | .conclusion" | head -n1)
+            if [ "$conclusion" != "success" ]; then
+              echo "Required workflow '$name' has not succeeded yet (conclusion: ${conclusion:-none}) for $SHA"
+              exit 1
+            fi
+          done
+          echo "All required workflows passed for $SHA"
+
   deploy:
+    needs: check-ci-status
     runs-on:
       - self-hosted
       - staging
@@ -30,6 +64,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
       - name: Build
         run: docker compose -f compose.yml --project-name ${{ secrets.STACK_NAME_STAGING }} build
       - name: Deploy

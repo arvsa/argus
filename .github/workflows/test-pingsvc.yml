@@ -1,0 +1,32 @@
+name: Test pingsvc
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types:
+      - opened
+      - synchronize
+
+jobs:
+  test-pingsvc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: true
+          cache-dependency-path: pingsvc/go.sum
+      - name: Run vet
+        working-directory: pingsvc
+        run: go vet ./...
+      - name: Build
+        working-directory: pingsvc
+        run: go build -o pingsvc ./cmd/pingsvc
+      - name: Run tests
+        working-directory: pingsvc
+        run: go test ./...
