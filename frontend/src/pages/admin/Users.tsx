@@ -10,6 +10,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -23,7 +25,9 @@ export function AdminUsers() {
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
 
-  const { data, isLoading } = useQuery({
+  const errorToast = useApiErrorToast();
+
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["users"],
     queryFn: () => getUsers(),
   });
@@ -31,17 +35,20 @@ export function AdminUsers() {
   const createMut = useMutation({
     mutationFn: createUser,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); setCreateOpen(false); },
+    onError: errorToast("Couldn't create user"),
   });
 
   const approveMut = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       updateUser(id, { admission_status: status }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onError: errorToast("Couldn't update user status"),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteUser,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["users"] }),
+    onError: errorToast("Couldn't delete user"),
   });
 
   const { register, handleSubmit, formState: { errors, isSubmitting }, reset } =
@@ -67,7 +74,9 @@ export function AdminUsers() {
         </div>
       )}
 
-      {isLoading ? <PageSpinner /> : (
+      {isLoading ? <PageSpinner /> : isError ? (
+        <ErrorState message="Couldn't load users." onRetry={() => refetch()} />
+      ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead className="bg-gray-50">
@@ -107,7 +116,7 @@ export function AdminUsers() {
                       {u.admission_status}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-gray-400 hidden md:table-cell text-xs">{formatDate(u.admission_status)}</td>
+                  <td className="px-4 py-3 text-gray-400 hidden md:table-cell text-xs">{formatDate(u.created_at)}</td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-1">
                       {u.admission_status === "pending" && (

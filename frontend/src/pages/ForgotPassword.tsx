@@ -8,12 +8,18 @@ import { Spinner } from "@/components/Spinner";
 
 export function ForgotPassword() {
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { register, handleSubmit, formState: { errors, isSubmitting } } =
     useForm<ForgotPasswordInput>({ resolver: zodResolver(forgotPasswordSchema) });
 
   async function onSubmit(data: ForgotPasswordInput) {
-    await forgotPassword(data.email);
-    setSent(true);
+    setError(null);
+    try {
+      await forgotPassword(data.email);
+      setSent(true);
+    } catch {
+      setError("Something went wrong. Please try again.");
+    }
   }
 
   if (sent) {
@@ -37,6 +43,11 @@ export function ForgotPassword() {
         <h2 className="text-lg font-semibold text-gray-900">Reset password</h2>
         <p className="text-sm text-gray-500">We'll send a link to your email</p>
       </div>
+      {error && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <div className="space-y-1">
         <label className="text-sm font-medium text-gray-700">Email</label>
         <input

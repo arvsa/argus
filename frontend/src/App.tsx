@@ -19,6 +19,7 @@ import { DeviceDetail } from "@/pages/DeviceDetail";
 import { Profile } from "@/pages/Profile";
 import { AdminUsers } from "@/pages/admin/Users";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { Toaster } from "@/components/Toaster";
 
 const qc = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000, retry: 1 } },
@@ -34,6 +35,7 @@ export default function App() {
     <QueryClientProvider client={qc}>
       <BrowserRouter>
         <WsBootstrap />
+        <Toaster />
         <Routes>
           {/* Public auth routes */}
           <Route element={<AuthLayout />}>

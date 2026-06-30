@@ -7,19 +7,20 @@ import { LiveFeed } from "@/components/LiveFeed";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
 import { formatTimestamp } from "@/lib/utils";
 
 export function Dashboard() {
   const deviceStates = useWsStore((s) => s.deviceStates);
 
-  const { data: stats, isLoading: statsLoading } = useQuery({
+  const { data: stats, isLoading: statsLoading, isError: statsError, refetch: refetchStats } = useQuery({
     queryKey: ["stats"],
     queryFn: getStats,
     refetchInterval: 30000,
   });
 
   // Only fetch the first 100 down devices for the list panel
-  const { data: downPage, isLoading: downLoading } = useQuery({
+  const { data: downPage, isLoading: downLoading, isError: downError, refetch: refetchDown } = useQuery({
     queryKey: ["state-down"],
     queryFn: () => getState(1, 100),
     refetchInterval: 30000,
@@ -51,6 +52,8 @@ export function Dashboard() {
 
       {isLoading ? (
         <PageSpinner />
+      ) : statsError ? (
+        <ErrorState message="Couldn't load device stats." onRetry={() => refetchStats()} />
       ) : (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <StatCard label="Total Devices" value={total} icon={Monitor} color="blue" />
@@ -82,7 +85,9 @@ export function Dashboard() {
               </span>
             )}
           </h2>
-          {downDevices.length === 0 && downCount === 0 ? (
+          {downError ? (
+            <ErrorState message="Couldn't load down devices." onRetry={() => refetchDown()} />
+          ) : downDevices.length === 0 && downCount === 0 ? (
             <div className="flex h-40 items-center justify-center text-sm text-gray-400">
               All devices are up ✓
             </div>

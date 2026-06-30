@@ -13,6 +13,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { HierarchyBreadcrumb } from "@/components/HierarchyBreadcrumb";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 export function CampusDetail() {
@@ -23,13 +25,15 @@ export function CampusDetail() {
   const [editOpen, setEditOpen] = useState(false);
   const [addBldgOpen, setAddBldgOpen] = useState(false);
 
+  const errorToast = useApiErrorToast();
+
   const { data: campus, isLoading: campusLoading } = useQuery({
     queryKey: ["campus", id],
     queryFn: () => getCampus(id!),
     enabled: !!id,
   });
 
-  const { data: buildingsData, isLoading: bldgsLoading } = useQuery({
+  const { data: buildingsData, isLoading: bldgsLoading, isError: bldgsError, refetch: refetchBldgs } = useQuery({
     queryKey: ["buildings"],
     queryFn: () => getBuildings(),
   });
@@ -39,16 +43,19 @@ export function CampusDetail() {
   const updateMut = useMutation({
     mutationFn: (d: CampusInput) => updateCampus(id!, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["campus", id] }); setEditOpen(false); },
+    onError: errorToast("Couldn't save campus"),
   });
 
   const deleteMut = useMutation({
     mutationFn: () => deleteCampus(id!),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["campuses"] }); navigate("/campuses"); },
+    onError: errorToast("Couldn't delete campus"),
   });
 
   const createBldgMut = useMutation({
     mutationFn: createBuilding,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["buildings"] }); setAddBldgOpen(false); },
+    onError: errorToast("Couldn't create building"),
   });
 
   const { register: regCampus, handleSubmit: hsCampus, reset: resetCampus, formState: { errors: errCampus } } =
@@ -57,6 +64,9 @@ export function CampusDetail() {
       defaultValues: { name: campus?.name, description: campus?.description },
     });
 
+  // `resetCampus` is react-hook-form's reset function: its identity is stable for the
+  // lifetime of this useForm() call, so omitting it from the deps array below is safe (this
+  // file is exempted from react/exhaustive-deps in .oxlintrc.json for that reason).
   useEffect(() => {
     if (campus) resetCampus({ name: campus.name, description: campus.description });
   }, [campus]);
@@ -74,7 +84,7 @@ export function CampusDetail() {
     <div className="space-y-6">
       <div className="space-y-2">
         <HierarchyBreadcrumb crumbs={[{ label: "Campuses", to: "/campuses" }, { label: campus.name }]} />
-        <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
           <h1 className="text-xl font-semibold text-gray-900">{campus.name}</h1>
           {user?.is_superuser && (
             <div className="flex items-center gap-2">
@@ -115,7 +125,9 @@ export function CampusDetail() {
           )}
         </div>
 
-        {bldgsLoading ? <PageSpinner /> : campusBuildings.length === 0 ? (
+        {bldgsLoading ? <PageSpinner /> : bldgsError ? (
+          <ErrorState message="Couldn't load buildings." onRetry={() => refetchBldgs()} />
+        ) : campusBuildings.length === 0 ? (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-gray-300 py-12 text-gray-400">
             <Building2 className="h-8 w-8" />
             <p className="text-sm">No buildings yet</p>

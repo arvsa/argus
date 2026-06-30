@@ -7,6 +7,7 @@ import { useAuthStore } from "@/store/auth";
 import { updateMeSchema, changePasswordSchema, type UpdateMeInput, type ChangePasswordInput } from "@/lib/schemas";
 import { PageHeader } from "@/components/PageHeader";
 import { Spinner } from "@/components/Spinner";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 
 export function Profile() {
   const { user, setUser } = useAuthStore();
@@ -22,14 +23,18 @@ export function Profile() {
     resolver: zodResolver(changePasswordSchema),
   });
 
+  const errorToast = useApiErrorToast();
+
   const profileMut = useMutation({
     mutationFn: updateMe,
     onSuccess: (u) => { setUser(u); setProfileSuccess(true); setTimeout(() => setProfileSuccess(false), 3000); },
+    onError: errorToast("Couldn't update profile"),
   });
 
   const pwMut = useMutation({
     mutationFn: (d: ChangePasswordInput) => changePassword({ current_password: d.current_password, new_password: d.new_password }),
     onSuccess: () => { pwForm.reset(); setPwSuccess(true); setTimeout(() => setPwSuccess(false), 3000); },
+    onError: errorToast("Couldn't change password"),
   });
 
   return (

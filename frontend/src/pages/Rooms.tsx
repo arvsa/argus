@@ -12,6 +12,8 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
+import { ErrorState } from "@/components/ErrorState";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { formatDate } from "@/lib/utils";
 
 function RoomForm({ defaultValues, onSubmit, loading, buildings }: {
@@ -55,7 +57,9 @@ export function Rooms() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editTarget, setEditTarget] = useState<Room | null>(null);
 
-  const { data, isLoading } = useQuery({ queryKey: ["rooms"], queryFn: () => getRooms() });
+  const errorToast = useApiErrorToast();
+
+  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ["rooms"], queryFn: () => getRooms() });
   const { data: buildingsData } = useQuery({ queryKey: ["buildings"], queryFn: () => getBuildings() });
   const buildings = buildingsData?.data ?? [];
   const buildingName = (id: string) => buildings.find((b) => b.id === id)?.name ?? "—";
@@ -63,16 +67,19 @@ export function Rooms() {
   const createMut = useMutation({
     mutationFn: createRoom,
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); setCreateOpen(false); },
+    onError: errorToast("Couldn't create room"),
   });
 
   const updateMut = useMutation({
     mutationFn: (d: RoomInput) => updateRoom(editTarget!.id, d),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["rooms"] }); setEditTarget(null); },
+    onError: errorToast("Couldn't save room"),
   });
 
   const deleteMut = useMutation({
     mutationFn: deleteRoom,
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rooms"] }),
+    onError: errorToast("Couldn't delete room"),
   });
 
   return (
@@ -89,7 +96,9 @@ export function Rooms() {
         }
       />
 
-      {isLoading ? <PageSpinner /> : !data?.data.length ? (
+      {isLoading ? <PageSpinner /> : isError ? (
+        <ErrorState message="Couldn't load rooms." onRetry={() => refetch()} />
+      ) : !data?.data.length ? (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-gray-300 py-16 text-gray-400">
           <Monitor className="h-10 w-10" />
           <p className="text-sm">No rooms yet</p>

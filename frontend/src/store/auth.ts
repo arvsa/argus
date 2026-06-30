@@ -8,6 +8,7 @@ export interface User {
   is_active: boolean;
   is_superuser: boolean;
   admission_status: "pending" | "approved" | "rejected";
+  created_at: string;
 }
 
 interface AuthState {
