@@ -69,6 +69,8 @@ def create_campus(
     """
     Create new campus.
     """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     campus = Campus.model_validate(campus_in)
     session.add(campus)
     session.commit()
@@ -90,9 +92,9 @@ def update_campus(
     campus = session.get(Campus, id)
     if not campus:
         raise HTTPException(status_code=404, detail="Campus not found")
-    # if not current_user.is_superuser and (campus.owner_id != current_user.id):
-    #     raise HTTPException(status_code=403, detail="Not enough permissions")
-    
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+
     update_dict = campus_in.model_dump(exclude_unset=True)
     campus.sqlmodel_update(update_dict)
     session.add(campus)

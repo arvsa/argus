@@ -5,7 +5,7 @@ from fastapi import APIRouter, HTTPException
 from sqlmodel import col, func, select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models import Building, BuildingCreate, BuildingPublic, BuildingsPublic, Room, RoomCreate, RoomPublic, CampusCreate, CampusPublic, CampusUpdate, CampusesPublic, Message, RoomsUpdate
+from app.models import Building, BuildingCreate, BuildingPublic, BuildingUpdate, BuildingsPublic, Room, RoomCreate, RoomPublic, CampusCreate, CampusPublic, CampusUpdate, CampusesPublic, Message, RoomsUpdate
 
 router = APIRouter(prefix="/buildings", tags=["buildings"])
 
@@ -62,6 +62,8 @@ def create_building(
     """
     Create new building.
     """
+    if not current_user.is_superuser:
+        raise HTTPException(status_code=403, detail="Not enough permissions")
     building = Building.model_validate(building_in)
     session.add(building)
     session.commit()
@@ -75,7 +77,7 @@ def update_building(
     session: SessionDep,
     current_user: CurrentUser,
     id: uuid.UUID,
-    building_in: BuildingCreate,
+    building_in: BuildingUpdate,
 ) -> Any:
     """
     Update a building.
