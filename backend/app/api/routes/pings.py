@@ -1,4 +1,5 @@
 import json
+from typing import cast
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -64,7 +65,9 @@ def get_state(current_user: CurrentUser, page: int = Query(1, ge=1), size: int =
     stop = start + size - 1
 
     # Get keys in descending score (most recent first). Use ZREVRANGE.
-    addrs: list[str] = redis.zrevrange("pings:index", start, stop)
+    # get_sync_redis_client() is always synchronous; redis-py's stubs type
+    # these as Awaitable[T] | T to also cover the async client.
+    addrs: list[str] = cast(list[str], redis.zrevrange("pings:index", start, stop))
     if not addrs:
         return JSONResponse({"page": page, "size": size, "total": 0, "items": []})
 
@@ -96,7 +99,10 @@ def get_state_scan(current_user: CurrentUser, cursor: int = Query(0, ge=0), coun
     """
     redis = get_sync_redis_client()
     # HSCAN returns (new_cursor, dict_of_kvs) in many clients
-    new_cursor, raw_map = redis.hscan("pings:state", cursor=cursor, count=count)
+    new_cursor, raw_map = cast(
+        tuple[int, dict[str, str]],
+        redis.hscan("pings:state", cursor=cursor, count=count),
+    )
     items = []
     for k, v in raw_map.items():
         try:
