@@ -13,14 +13,14 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         name: Checkout PR for own repo
         if: env.HAS_SECRETS == 'true'
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 0
           token: ${{ secrets.PRE_COMMIT }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         name: Checkout PR for fork
         if: env.HAS_SECRETS == 'false'
         with:

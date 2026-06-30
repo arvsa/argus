@@ -29,7 +29,7 @@ jobs:
       SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Build
         run: docker compose -f compose.yml --project-name ${{ secrets.STACK_NAME_PRODUCTION }} build
       - name: Deploy
