@@ -1,5 +1,9 @@
 # Argus
 
+[![Test Backend](https://github.com/arvsa/argus/actions/workflows/test-backend.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-backend.yml)
+[![Test pingsvc](https://github.com/arvsa/argus/actions/workflows/test-pingsvc.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-pingsvc.yml)
+[![Test Frontend](https://github.com/arvsa/argus/actions/workflows/test-frontend.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-frontend.yml)
+
 A network device monitoring system. It continuously pings thousands of devices across a Campus → Building → Room → Device hierarchy, tracks up/down state in Redis, and streams live status changes to clients over WebSockets.
 
 ## Services
