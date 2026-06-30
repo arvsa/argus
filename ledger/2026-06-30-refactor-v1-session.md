@@ -1,10 +1,9 @@
 # Session Ledger — 2026-06-30 — refactor-v1 execution
 
 Detailed record of what was done, in what order, and why, while executing
-[`plan/refactor-v1.md`](../plan/refactor-v1.md). See
-[`plan/refactor-v1-changes.md`](../plan/refactor-v1-changes.md) for the
-plan-vs-actual summary and troubleshooting notes; this file is the fuller
-chronological record with every file touched.
+[`plan/refactor-v1.md`](../plan/refactor-v1.md), including every file
+touched, plan-vs-actual deviations, and troubleshooting notes for the
+issues hit along the way.
 
 ## Scope-setting
 
@@ -170,14 +169,6 @@ build clean, 21/21 tests pass.
 - `frontend/src/store/auth.ts` (modified — added `created_at` to `User` type)
 - `frontend/src/store/toast.ts` (new)
 
-## Documentation checkpoint (`plan/refactor-v1-changes.md`)
-
-Wrote a companion doc to the plan summarizing workstreams 1–3, deviations
-from the plan and why, and a troubleshooting section (the `workflow_run`
-gating gotcha, the miniredis pub/sub limitation, the missing
-`frontend/Dockerfile` workaround, a jsdom email-validation quirk hit while
-writing `Login.test.tsx`).
-
 ## User-reported bug: backend tests failing in CI with Redis connection errors
 
 User reported (via pasted GitHub Actions output) that backend tests were
@@ -330,9 +321,10 @@ which doesn't exist in this environment — expected, not a bug).
   workflows and the gated staging deploy, and added a Logs section
   (`docker compose logs -f`, multi-service tailing, `--tail`/`--since`
   flags) per explicit user request.
-- `plan/refactor-v1-changes.md`: committed (had been sitting uncommitted
-  in the working tree since being written earlier in the session).
-- `ledger/2026-06-30-refactor-v1-session.md`: this file.
+- `ledger/2026-06-30-refactor-v1-session.md`: this file. (A separate
+  `plan/refactor-v1-changes.md` companion doc was written and briefly
+  committed earlier in the session, then deleted once this ledger
+  superseded it as the single source of truth for what changed and why.)
 - `memory/2026-06-30-session-summary-llm-memory.md`: a condensed,
   structured summary of this session intended for loading as context in
   future sessions. Kept in a separate `memory/` folder rather than

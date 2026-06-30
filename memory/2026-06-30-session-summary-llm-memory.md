@@ -3,7 +3,6 @@ date: 2026-06-30
 purpose: condensed session summary for loading as context in future sessions
 full_detail: ledger/2026-06-30-refactor-v1-session.md
 related_plan: plan/refactor-v1.md
-related_changes_doc: plan/refactor-v1-changes.md
 ---
 
 # Session Summary — 2026-06-30 — argus refactor-v1
@@ -86,8 +85,7 @@ pipeline, verified end-to-end.
 ## Where to look for more detail
 
 - `ledger/2026-06-30-refactor-v1-session.md` — full chronological record
-  with every file touched, organized by PR/branch.
-- `plan/refactor-v1-changes.md` — plan-vs-actual summary with a
-  troubleshooting section (gotchas: `workflow_run` multi-workflow gating,
+  with every file touched, organized by PR/branch, including the
+  troubleshooting notes (gotchas: `workflow_run` multi-workflow gating,
   miniredis pub/sub limitation, jsdom email-validation quirk).
 - `plan/refactor-v1.md` — the original plan being executed.
