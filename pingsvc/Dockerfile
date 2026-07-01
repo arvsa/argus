@@ -1,6 +1,6 @@
 # pingsvc/Dockerfile
 # Builder stage — use Go 1.24 or newer
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git build-base
 
 WORKDIR /src
