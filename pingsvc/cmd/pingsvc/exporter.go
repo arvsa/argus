@@ -28,6 +28,9 @@ type ExporterConfig struct {
 	// cycle also flushes the spool to object storage, removing files on
 	// successful push and leaving them for retry on failure.
 	Store ObjectStore
+	// Signer is optional and only takes effect when Store is also set. When
+	// set, a signed Manifest is pushed alongside every snapshot object.
+	Signer *Signer
 }
 
 // Snapshot is the periodic aggregated payload an argus-client exports.
@@ -180,7 +183,7 @@ func runExportCycle(ctx context.Context, rdb redis.Cmdable, cfg ExporterConfig) 
 	if cfg.Store == nil {
 		return
 	}
-	pushed, err := flushSpool(ctx, cfg.Store, cfg.SpoolDir, cfg.TenantID, cfg.ZoneID)
+	pushed, err := flushSpool(ctx, cfg.Store, cfg.Signer, cfg.SpoolDir, cfg.TenantID, cfg.ZoneID)
 	if err != nil {
 		metrExporterPushErrors.Inc()
 		log.Printf("exporter: push failed after %d file(s) this cycle: %v", pushed, err)
@@ -192,15 +195,27 @@ func runExportCycle(ctx context.Context, rdb redis.Cmdable, cfg ExporterConfig) 
 	}
 }
 
+// parseSpoolTimestamp extracts the unix-ms timestamp embedded in a spool
+// filename ("<ts>.json.gz"), shared by objectKeyForSpoolFile (for the
+// date-based key prefix) and flushSpool (as the manifest's sequence number,
+// see signManifest's doc comment).
+func parseSpoolTimestamp(filename string) (int64, error) {
+	tsPart := strings.TrimSuffix(filename, ".json.gz")
+	tsMs, err := strconv.ParseInt(tsPart, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse timestamp from spool filename %q: %w", filename, err)
+	}
+	return tsMs, nil
+}
+
 // objectKeyForSpoolFile derives the object storage key for a spooled
 // snapshot file: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<unix_ts>.json.gz (plan
 // §4.4). The date parts come from the timestamp embedded in the filename
 // itself, so no separate metadata needs to travel alongside the file.
 func objectKeyForSpoolFile(tenantID, zoneID, filename string) (string, error) {
-	tsPart := strings.TrimSuffix(filename, ".json.gz")
-	tsMs, err := strconv.ParseInt(tsPart, 10, 64)
+	tsMs, err := parseSpoolTimestamp(filename)
 	if err != nil {
-		return "", fmt.Errorf("parse timestamp from spool filename %q: %w", filename, err)
+		return "", err
 	}
 	t := time.UnixMilli(tsMs).UTC()
 	return fmt.Sprintf("%s/%s/%04d/%02d/%02d/%02d/%s",
@@ -214,7 +229,14 @@ func objectKeyForSpoolFile(tenantID, zoneID, filename string) (string, error) {
 // starting from the same oldest file. Successfully pushed files are removed
 // from the spool; files with an unparseable name are skipped (not
 // retryable) rather than blocking every file behind them forever.
-func flushSpool(ctx context.Context, store ObjectStore, spoolDir, tenantID, zoneID string) (pushed int, err error) {
+//
+// If signer is non-nil, a signed Manifest (plan §4.4) is pushed alongside
+// each snapshot at "<key>.manifest.json". A manifest push failure counts as
+// a failure of the whole file -- the snapshot alone doesn't achieve the
+// anti-tamper guarantee signing is for, so the file stays in the spool and
+// retries both objects next cycle (harmless: object keys are immutable, so
+// re-pushing identical content is a safe no-op).
+func flushSpool(ctx context.Context, store ObjectStore, signer *Signer, spoolDir, tenantID, zoneID string) (pushed int, err error) {
 	entries, err := os.ReadDir(spoolDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -246,6 +268,19 @@ func flushSpool(ctx context.Context, store ObjectStore, spoolDir, tenantID, zone
 		if err := store.Put(ctx, key, data); err != nil {
 			return pushed, fmt.Errorf("push %s: %w", name, err)
 		}
+
+		if signer != nil {
+			tsMs, _ := parseSpoolTimestamp(name) // already validated by objectKeyForSpoolFile above
+			manifest := signManifest(signer.priv, tsMs, data)
+			manifestBytes, err := json.Marshal(manifest)
+			if err != nil {
+				return pushed, fmt.Errorf("marshal manifest for %s: %w", name, err)
+			}
+			if err := store.Put(ctx, key+".manifest.json", manifestBytes); err != nil {
+				return pushed, fmt.Errorf("push manifest for %s: %w", name, err)
+			}
+		}
+
 		if err := os.Remove(path); err != nil {
 			log.Printf("exporter: pushed %s but failed to remove from spool: %v", name, err)
 		}
