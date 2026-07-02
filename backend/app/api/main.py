@@ -5,6 +5,8 @@ from app.api.routes import (
     campuses,
     devices,
     login,
+    node_types,
+    nodes,
     pings,
     private,
     rooms,
@@ -24,6 +26,8 @@ api_router.include_router(rooms.router)
 api_router.include_router(devices.router)
 api_router.include_router(pings.router)
 api_router.include_router(zones.router)
+api_router.include_router(node_types.router)
+api_router.include_router(nodes.router)
 
 if settings.ENVIRONMENT == "local":
     api_router.include_router(private.router)
