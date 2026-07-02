@@ -224,8 +224,14 @@ func main() {
 	batchSize := flag.Int("batch", 500, "redis pipeline batch size")
 	batchFlushMs := flag.Int("batch-flush-ms", 200, "max milliseconds before flushing a partial batch")
 	metricsAddr := flag.String("metrics-addr", ":9090", "address to serve /metrics on")
+	roleFlag := flag.String("role", string(RolePingsvc), "operating role: pingsvc|exporter|both")
 
 	flag.Parse()
+
+	role, err := ParseRole(*roleFlag)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 
 	// Register metrics
 	prometheus.MustRegister(
@@ -251,14 +257,29 @@ func main() {
 		}
 	}()
 
-	// load targets
-	targets := loadTargets(*targetsFile)
-
 	rdb := redis.NewClient(&redis.Options{Addr: *redisAddr})
 	ctx := context.Background()
 	if err := waitForRedis(ctx, rdb, 30*time.Second); err != nil {
 		log.Fatalf("redis not available: %v", err)
 	}
+
+	if role.RunsExporter() {
+		// TODO(Phase 1 follow-up): real snapshot generation + local disk
+		// spool. See plan/dynamic-hierarchy-multi-zone-architecture.md §4.3.
+		log.Printf("role=%s: exporter enabled (not yet implemented)", role)
+	}
+
+	if !role.RunsPingPipeline() {
+		log.Printf("role=%s: ping pipeline disabled", role)
+		sig := make(chan os.Signal, 1)
+		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		<-sig
+		log.Println("shutting down")
+		return
+	}
+
+	// load targets
+	targets := loadTargets(*targetsFile)
 
 	// Load the Lua script into Redis and keep the SHA
 	sha, err := loadPublishScript(ctx, rdb)
