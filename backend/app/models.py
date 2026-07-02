@@ -413,6 +413,11 @@ class ZoneSummaryPublic(ZoneSummaryBase):
     down_count: int
     last_snapshot_ts: int | None = None
     last_pulled_at: datetime | None = None
+    is_stale: bool
+
+class ZoneSummariesPublic(SQLModel):
+    data: list[ZoneSummaryPublic]
+    count: int
 
 
 # A zone's registered ed25519 public key (plan §4.4: "a real deployment

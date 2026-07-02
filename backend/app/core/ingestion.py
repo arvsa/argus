@@ -3,6 +3,7 @@ import gzip
 import hashlib
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import boto3  # type: ignore[import-untyped]
@@ -13,7 +14,7 @@ from sqlmodel import Session
 from app import crud
 from app.core.config import settings
 from app.core.db import engine
-from app.models import ClientSnapshotCreate
+from app.models import ClientSnapshotCreate, ZoneSummary
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +152,49 @@ def run_ingestion_cycle(*, session: Session, s3_client: Any, bucket: str) -> int
     return ingested
 
 
+def is_zone_stale(last_pulled_at: datetime | None, *, threshold_seconds: int) -> bool:
+    """A zone is stale once it's gone longer than threshold_seconds without
+    a successful pull -- the "zone went dark" signal from plan §4.5. None
+    (never pulled) counts as stale too, though in practice a ZoneSummary
+    row's last_pulled_at is always set by the time this is called."""
+    if last_pulled_at is None:
+        return True
+    # MySQL round-trips DateTime(timezone=True) columns as naive datetimes
+    # (it has no native tz-aware type) even though the app always writes
+    # datetime.now(timezone.utc) -- treat a naive value read back from the
+    # DB as UTC rather than crashing on tz-aware - tz-naive subtraction.
+    if last_pulled_at.tzinfo is None:
+        last_pulled_at = last_pulled_at.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - last_pulled_at).total_seconds()
+    return age_seconds > threshold_seconds
+
+
+def check_and_log_stale_zones(
+    *, session: Session, threshold_seconds: int
+) -> list[ZoneSummary]:
+    """Log a warning for every zone that hasn't been successfully pulled
+    within threshold_seconds, and return them. A zone's own WAN outage
+    means it can't self-report -- this is how the server notices instead."""
+    stale = crud.get_stale_zones(session=session, threshold_seconds=threshold_seconds)
+    for zone in stale:
+        logger.warning(
+            "zone %s/%s has not pushed since %s (threshold %ds)",
+            zone.tenant_id,
+            zone.zone_id,
+            zone.last_pulled_at,
+            threshold_seconds,
+        )
+    return stale
+
+
 async def ingestion_task(stop_event: asyncio.Event) -> None:
     """Background task mirroring redis_listener_task's shape: periodically
-    poll settings.S3_BUCKET for new snapshot objects and ingest them until
-    stop_event is set. No-ops immediately if S3_BUCKET isn't configured,
-    matching pingsvc's own opt-in pattern for its side of the push (its
-    -s3-bucket flag). boto3 is sync, so each cycle runs in a worker thread
-    via asyncio.to_thread rather than blocking the event loop."""
+    poll settings.S3_BUCKET for new snapshot objects, ingest them, and log
+    any zones that have gone stale, until stop_event is set. No-ops
+    immediately if S3_BUCKET isn't configured, matching pingsvc's own
+    opt-in pattern for its side of the push (its -s3-bucket flag). boto3 is
+    sync, so each cycle runs in a worker thread via asyncio.to_thread
+    rather than blocking the event loop."""
     if not settings.S3_BUCKET:
         logger.info("ingestion: no S3_BUCKET configured, ingestion task disabled")
         return
@@ -171,8 +208,13 @@ async def ingestion_task(stop_event: asyncio.Event) -> None:
                 count = await asyncio.to_thread(
                     run_ingestion_cycle, session=session, s3_client=s3_client, bucket=bucket
                 )
-            if count:
-                logger.info("ingestion: ingested %d new snapshot(s)", count)
+                if count:
+                    logger.info("ingestion: ingested %d new snapshot(s)", count)
+                await asyncio.to_thread(
+                    check_and_log_stale_zones,
+                    session=session,
+                    threshold_seconds=settings.STALENESS_THRESHOLD_SECONDS,
+                )
         except Exception:
             logger.exception("ingestion cycle failed")
 
