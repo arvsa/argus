@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import EmailStr
 from sqlalchemy import JSON, Column, DateTime, UniqueConstraint
@@ -334,3 +334,103 @@ class NodePublic(NodeBase):
 class NodesPublic(SQLModel):
     data: list[NodePublic]
     count: int
+
+
+# ========== argus-server ingestion (Phase 3) ============
+#
+# Stores what argus-server pulls from object storage, per zone, as opaque
+# JSON rather than trying to unify taxonomy across zones (plan §4.5). Note:
+# pingsvc's actual exported Snapshot payload is {zone_id, ts, nodes,
+# devices} (see pingsvc/cmd/pingsvc/exporter.go) -- it has no separate
+# hierarchy_json describing the NodeType chain's shape, since pingsvc has
+# no connection to the backend's Node/NodeType model at all (it only knows
+# ancestor id *strings* from its target file, not type names/ranks). The
+# plan's original §4.5 sketch assumed a hierarchy_json field that was never
+# actually produced; ClientSnapshot below stores what pingsvc really emits.
+
+class ClientSnapshotBase(SQLModel):
+    tenant_id: str = Field(max_length=255, index=True)
+    zone_id: str = Field(max_length=255, index=True)
+    snapshot_ts: int  # the "ts" field embedded in the pulled payload (pingsvc's nowMs())
+    storage_key: str = Field(max_length=512, unique=True, index=True)
+
+class ClientSnapshotCreate(ClientSnapshotBase):
+    nodes_json: dict[str, Any] = Field(default_factory=dict)
+    devices_json: dict[str, Any] = Field(default_factory=dict)
+    signature_verified: bool | None = None
+
+class ClientSnapshot(ClientSnapshotBase, table=True):
+    __tablename__ = "client_snapshot"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    nodes_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    devices_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
+    # None = no ZoneSigningKey registered for this zone at ingest time, so
+    # the manifest (if any) couldn't be checked either way.
+    signature_verified: bool | None = Field(default=None)
+    pulled_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+
+class ClientSnapshotPublic(ClientSnapshotBase):
+    id: uuid.UUID
+    nodes_json: dict[str, Any]
+    devices_json: dict[str, Any]
+    signature_verified: bool | None = None
+    pulled_at: datetime | None = None
+
+
+# Per-zone rollup, upserted (not appended) on every ingest cycle -- one row
+# per (tenant_id, zone_id), independent of that zone's hierarchy shape, for
+# cross-zone dashboards that don't need per-node detail.
+class ZoneSummaryBase(SQLModel):
+    tenant_id: str = Field(max_length=255, index=True)
+    zone_id: str = Field(max_length=255, index=True)
+
+class ZoneSummary(ZoneSummaryBase, table=True):
+    __tablename__ = "zone_summary"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "zone_id", name="uq_zone_summary_tenant_zone"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    up_count: int = 0
+    down_count: int = 0
+    last_snapshot_ts: int | None = None
+    last_pulled_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True),  # type: ignore
+    )
+
+class ZoneSummaryPublic(ZoneSummaryBase):
+    id: uuid.UUID
+    up_count: int
+    down_count: int
+    last_snapshot_ts: int | None = None
+    last_pulled_at: datetime | None = None
+
+
+# A zone's registered ed25519 public key (plan §4.4: "a real deployment
+# verifies against a public key registered out-of-band," not one carried in
+# the manifest itself). Registering/rotating this is an ops action -- no
+# HTTP route yet, only the crud functions an ingestion job or future admin
+# tool needs.
+class ZoneSigningKeyBase(SQLModel):
+    tenant_id: str = Field(max_length=255, index=True)
+    zone_id: str = Field(max_length=255, index=True)
+    public_key_hex: str = Field(max_length=64)  # ed25519 public key, hex-encoded (32 bytes)
+
+class ZoneSigningKeyCreate(ZoneSigningKeyBase):
+    pass
+
+class ZoneSigningKey(ZoneSigningKeyBase, table=True):
+    __tablename__ = "zone_signing_key"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "zone_id", name="uq_zone_signing_key_tenant_zone"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )

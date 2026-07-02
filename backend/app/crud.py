@@ -1,10 +1,13 @@
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlmodel import Session, select
 
 from app.core.security import get_password_hash, verify_password
 from app.models import (
+    ClientSnapshot,
+    ClientSnapshotCreate,
     Device,
     DeviceCreate,
     Item,
@@ -16,6 +19,9 @@ from app.models import (
     User,
     UserCreate,
     UserUpdate,
+    ZoneSigningKey,
+    ZoneSigningKeyCreate,
+    ZoneSummary,
 )
 
 
@@ -139,3 +145,104 @@ def create_node(*, session: Session, node_create: NodeCreate) -> Node:
     session.commit()
     session.refresh(db_obj)
     return db_obj
+
+
+def create_client_snapshot(
+    *, session: Session, snapshot_create: ClientSnapshotCreate
+) -> ClientSnapshot:
+    """Insert an ingested snapshot. Raises IntegrityError (via the DB's
+    unique constraint on storage_key) if this object was already ingested --
+    callers doing a polling loop should check client_snapshot_already_ingested
+    first to treat that as a routine skip rather than an error."""
+    db_obj = ClientSnapshot.model_validate(snapshot_create)
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def client_snapshot_already_ingested(*, session: Session, storage_key: str) -> bool:
+    statement = select(ClientSnapshot).where(ClientSnapshot.storage_key == storage_key)
+    return session.exec(statement).first() is not None
+
+
+def upsert_zone_summary(
+    *,
+    session: Session,
+    tenant_id: str,
+    zone_id: str,
+    up_count: int,
+    down_count: int,
+    last_snapshot_ts: int,
+) -> ZoneSummary:
+    """Create or update the single rollup row for (tenant_id, zone_id)."""
+    statement = select(ZoneSummary).where(
+        ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == zone_id
+    )
+    existing = session.exec(statement).first()
+
+    now = datetime.now(timezone.utc)
+    if existing is None:
+        db_obj = ZoneSummary(
+            tenant_id=tenant_id,
+            zone_id=zone_id,
+            up_count=up_count,
+            down_count=down_count,
+            last_snapshot_ts=last_snapshot_ts,
+            last_pulled_at=now,
+        )
+    else:
+        db_obj = existing
+        db_obj.up_count = up_count
+        db_obj.down_count = down_count
+        db_obj.last_snapshot_ts = last_snapshot_ts
+        db_obj.last_pulled_at = now
+
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def create_zone_signing_key(
+    *, session: Session, key_create: ZoneSigningKeyCreate
+) -> ZoneSigningKey:
+    """Register (or rotate) a zone's ed25519 public key. Rotation replaces
+    the existing row for (tenant_id, zone_id) in place -- signatures made
+    with the old key will correctly stop verifying after this, which is the
+    intended effect of a rotation."""
+    if len(key_create.public_key_hex) != 64:
+        raise ValueError(
+            f"public_key_hex must be 64 hex characters (32-byte ed25519 key), "
+            f"got {len(key_create.public_key_hex)}"
+        )
+    try:
+        bytes.fromhex(key_create.public_key_hex)
+    except ValueError as e:
+        raise ValueError(f"public_key_hex is not valid hex: {e}") from e
+
+    statement = select(ZoneSigningKey).where(
+        ZoneSigningKey.tenant_id == key_create.tenant_id,
+        ZoneSigningKey.zone_id == key_create.zone_id,
+    )
+    existing = session.exec(statement).first()
+
+    if existing is None:
+        db_obj = ZoneSigningKey.model_validate(key_create)
+    else:
+        db_obj = existing
+        db_obj.public_key_hex = key_create.public_key_hex
+
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def get_zone_signing_key(
+    *, session: Session, tenant_id: str, zone_id: str
+) -> ZoneSigningKey | None:
+    statement = select(ZoneSigningKey).where(
+        ZoneSigningKey.tenant_id == tenant_id, ZoneSigningKey.zone_id == zone_id
+    )
+    return session.exec(statement).first()

@@ -7,7 +7,18 @@ from sqlmodel import Session, delete
 from app.core.config import settings
 from app.core.db import engine, init_db
 from app.main import app
-from app.models import Building, Campus, Device, Node, NodeType, Room, User
+from app.models import (
+    Building,
+    Campus,
+    ClientSnapshot,
+    Device,
+    Node,
+    NodeType,
+    Room,
+    User,
+    ZoneSigningKey,
+    ZoneSummary,
+)
 from tests.utils.user import authentication_token_from_email
 from tests.utils.utils import get_superuser_token_headers
 
@@ -20,7 +31,18 @@ def db() -> Generator[Session, None, None]:
         # Delete child-most tables first so FK constraints never block cleanup,
         # even if a test created rows outside the normal Campus->Building->Room->Device
         # cascade chain (e.g. an orphaned Device with room_id=None).
-        for model in (Device, Room, Building, Campus, Node, NodeType, User):
+        for model in (
+            ClientSnapshot,
+            ZoneSummary,
+            ZoneSigningKey,
+            Device,
+            Room,
+            Building,
+            Campus,
+            Node,
+            NodeType,
+            User,
+        ):
             session.execute(delete(model))
         session.commit()
 
