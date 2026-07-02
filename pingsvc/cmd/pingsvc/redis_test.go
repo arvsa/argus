@@ -161,6 +161,83 @@ func TestPublishAndAggregate_BuildingCountersTrackUpDown(t *testing.T) {
 	assertHashFieldMissing(t, ctx, rdb, bldgKey, "up")
 }
 
+func TestPublishAndAggregate_NodeCountersTrackUpDown(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	nodeKey := "stats:node:node-101"
+
+	a := Event{Addr: "10.0.3.1", OK: true, TS: 1000, NodeIDs: []string{"node-101"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, a); err != nil {
+		t.Fatalf("publish error = %v", err)
+	}
+	assertHashField(t, ctx, rdb, nodeKey, "up", "1")
+	assertHashFieldMissing(t, ctx, rdb, nodeKey, "down")
+
+	aDown := Event{Addr: "10.0.3.1", OK: false, TS: 2000, NodeIDs: []string{"node-101"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, aDown); err != nil {
+		t.Fatalf("down publish error = %v", err)
+	}
+	assertHashField(t, ctx, rdb, nodeKey, "up", "0")
+	assertHashField(t, ctx, rdb, nodeKey, "down", "1")
+}
+
+func TestPublishAndAggregate_NodeIDsUpdatesEveryAncestorInChain(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	// Ancestor chain: campus -> building -> room, all counters must move
+	// together for a single device state change (plan §4.2: fan-out
+	// proportional to depth, not a fixed level count).
+	ancestors := []string{"campus-1", "building-2", "room-3"}
+	ev := Event{Addr: "10.0.3.2", OK: true, TS: 1000, NodeIDs: ancestors}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("publish error = %v", err)
+	}
+
+	for _, id := range ancestors {
+		assertHashField(t, ctx, rdb, "stats:node:"+id, "up", "1")
+	}
+}
+
+func TestPublishAndAggregate_NodeIDsAndLegacyRoomBldgBothUpdate(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	// During the Phase 0 transition, an event may carry both the legacy
+	// room/bldg fields and the generalized node ancestor chain; both must
+	// be written (dual-write, plan §5 Phase 0 row).
+	ev := Event{
+		Addr: "10.0.3.3", OK: true, TS: 1000,
+		RoomID: "room-42", BldgID: "bldg-7", NodeIDs: []string{"node-9"},
+	}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("publish error = %v", err)
+	}
+
+	assertHashField(t, ctx, rdb, "stats:room:room-42", "up", "1")
+	assertHashField(t, ctx, rdb, "stats:bldg:bldg-7", "up", "1")
+	assertHashField(t, ctx, rdb, "stats:node:node-9", "up", "1")
+}
+
+func TestPublishAndAggregate_EmptyNodeIDsDoesNotWriteAnyNodeCounters(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	ev := Event{Addr: "10.0.3.4", OK: true, TS: 1000}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("publish error = %v", err)
+	}
+
+	keys, err := rdb.Keys(ctx, "stats:node:*").Result()
+	if err != nil {
+		t.Fatalf("KEYS stats:node:* error = %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("stats:node:* keys = %v, want none for an event with no NodeIDs", keys)
+	}
+}
+
 // NOTE: publishIfChangedAndAggregateScript also PUBLISHes to pings:events /
 // events:room:<id> / events:bldg:<id> depending on which IDs are set on the
 // event. That channel-routing behavior is intentionally NOT covered here:
