@@ -224,6 +224,14 @@ var (
 		Name: "pings_exporter_errors_total",
 		Help: "Number of exporter cycles that failed to build or write a snapshot.",
 	})
+	metrExporterSnapshotsPushed = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pings_exporter_snapshots_pushed_total",
+		Help: "Number of snapshot files successfully pushed to object storage.",
+	})
+	metrExporterPushErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pings_exporter_push_errors_total",
+		Help: "Number of exporter cycles where pushing a spooled snapshot to object storage failed.",
+	})
 )
 
 func main() {
@@ -238,8 +246,14 @@ func main() {
 	metricsAddr := flag.String("metrics-addr", ":9090", "address to serve /metrics on")
 	roleFlag := flag.String("role", string(RolePingsvc), "operating role: pingsvc|exporter|both")
 	zoneID := flag.String("zone-id", getenv("ARGUS_ZONE_ID", "default"), "zone identifier included in exported snapshots")
+	tenantID := flag.String("tenant-id", getenv("ARGUS_TENANT_ID", "default"), "tenant identifier used as the object storage key prefix")
 	exportInterval := flag.Duration("export-interval", 30*time.Second, "how often the exporter builds and spools a snapshot")
 	spoolDir := flag.String("spool-dir", getenv("ARGUS_SPOOL_DIR", "/var/lib/argus/pending"), "local directory the exporter writes snapshot files to")
+	s3Bucket := flag.String("s3-bucket", getenv("ARGUS_S3_BUCKET", ""), "object storage bucket to push snapshots to (empty = spool-only, no push)")
+	s3Region := flag.String("s3-region", getenv("ARGUS_S3_REGION", "us-east-1"), "object storage region")
+	s3Endpoint := flag.String("s3-endpoint", getenv("ARGUS_S3_ENDPOINT", ""), "object storage endpoint override (empty = real AWS S3; set for MinIO/S3-compatible endpoints)")
+	s3AccessKey := flag.String("s3-access-key", getenv("ARGUS_S3_ACCESS_KEY", ""), "object storage access key (empty = use the AWS SDK's default credential chain)")
+	s3SecretKey := flag.String("s3-secret-key", getenv("ARGUS_S3_SECRET_KEY", ""), "object storage secret key (empty = use the AWS SDK's default credential chain)")
 
 	flag.Parse()
 
@@ -261,6 +275,8 @@ func main() {
 		metrJobsDropped,
 		metrExporterSnapshotsWritten,
 		metrExporterErrors,
+		metrExporterSnapshotsPushed,
+		metrExporterPushErrors,
 	)
 	prometheus.MustRegister(prometheus.NewGaugeFunc(
 		prometheus.GaugeOpts{
@@ -295,11 +311,29 @@ func main() {
 
 	var stopExporter func()
 	if role.RunsExporter() {
-		log.Printf("role=%s: exporter enabled, interval=%v, spool-dir=%s", role, *exportInterval, *spoolDir)
+		var store ObjectStore
+		if *s3Bucket != "" {
+			s3Store, err := NewS3ObjectStore(ctx, S3Config{
+				Bucket:    *s3Bucket,
+				Region:    *s3Region,
+				Endpoint:  *s3Endpoint,
+				AccessKey: *s3AccessKey,
+				SecretKey: *s3SecretKey,
+			})
+			if err != nil {
+				log.Fatalf("failed to init object store: %v", err)
+			}
+			store = s3Store
+			log.Printf("role=%s: exporter enabled, interval=%v, spool-dir=%s, s3-bucket=%s", role, *exportInterval, *spoolDir, *s3Bucket)
+		} else {
+			log.Printf("role=%s: exporter enabled, interval=%v, spool-dir=%s, no s3-bucket configured (spool-only)", role, *exportInterval, *spoolDir)
+		}
 		stopExporter = runExporter(ctx, rdb, ExporterConfig{
 			ZoneID:   *zoneID,
+			TenantID: *tenantID,
 			Interval: *exportInterval,
 			SpoolDir: *spoolDir,
+			Store:    store,
 		})
 	}
 
