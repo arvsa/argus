@@ -3,12 +3,14 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,9 +19,10 @@ import (
 // fakeObjectStore is an in-memory ObjectStore double for tests that don't
 // need a real S3-compatible endpoint (see objectstore_test.go for that).
 type fakeObjectStore struct {
-	mu       sync.Mutex
-	puts     map[string][]byte
-	failNext bool // if true, the next Put call fails and resets this flag
+	mu            sync.Mutex
+	puts          map[string][]byte
+	failNext      bool   // if true, the next Put call fails and resets this flag
+	failKeySuffix string // if non-empty, any Put whose key has this suffix fails
 }
 
 func newFakeObjectStore() *fakeObjectStore {
@@ -32,6 +35,9 @@ func (f *fakeObjectStore) Put(_ context.Context, key string, data []byte) error 
 	if f.failNext {
 		f.failNext = false
 		return errors.New("fakeObjectStore: simulated put failure")
+	}
+	if f.failKeySuffix != "" && strings.HasSuffix(key, f.failKeySuffix) {
+		return errors.New("fakeObjectStore: simulated put failure for key suffix " + f.failKeySuffix)
 	}
 	f.puts[key] = data
 	return nil
@@ -288,7 +294,7 @@ func TestFlushSpool_EmptySpoolDirIsNoOp(t *testing.T) {
 	dir := t.TempDir()
 	store := newFakeObjectStore()
 
-	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	pushed, err := flushSpool(context.Background(), store, nil, dir, "tenant-1", "zone-1")
 	if err != nil {
 		t.Fatalf("flushSpool() error = %v", err)
 	}
@@ -304,7 +310,7 @@ func TestFlushSpool_PushesFilesOldestFirstAndRemovesOnSuccess(t *testing.T) {
 	writeSpoolFile(t, dir, "2000.json.gz", "second")
 	writeSpoolFile(t, dir, "1000.json.gz", "first")
 
-	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	pushed, err := flushSpool(context.Background(), store, nil, dir, "tenant-1", "zone-1")
 	if err != nil {
 		t.Fatalf("flushSpool() error = %v", err)
 	}
@@ -332,7 +338,7 @@ func TestFlushSpool_StopsOnFirstFailureLeavingRestForNextCycle(t *testing.T) {
 	writeSpoolFile(t, dir, "2000.json.gz", "second")
 	store.failNext = true // the oldest (first) push fails
 
-	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	pushed, err := flushSpool(context.Background(), store, nil, dir, "tenant-1", "zone-1")
 	if err == nil {
 		t.Fatal("flushSpool() error = nil, want an error when a push fails")
 	}
@@ -355,7 +361,7 @@ func TestFlushSpool_SkipsUnparseableFilenamesWithoutBlockingOthers(t *testing.T)
 	writeSpoolFile(t, dir, "not-a-timestamp.json.gz", "junk")
 	writeSpoolFile(t, dir, "1000.json.gz", "valid")
 
-	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	pushed, err := flushSpool(context.Background(), store, nil, dir, "tenant-1", "zone-1")
 	if err != nil {
 		t.Fatalf("flushSpool() error = %v", err)
 	}
@@ -400,5 +406,136 @@ func TestRunExporter_WithStore_PushesAndRemovesSpoolFile(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Errorf("spool dir has %d entries after successful push, want 0", len(entries))
+	}
+}
+
+// ── flushSpool with a Signer configured ───────────────────────────────────
+
+func testSigner(t *testing.T) *Signer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey() error = %v", err)
+	}
+	return &Signer{priv: priv}
+}
+
+func TestFlushSpool_WithSigner_PushesVerifiableManifestAlongsideSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+	signer := testSigner(t)
+
+	writeSpoolFile(t, dir, "1000.json.gz", `{"zone_id":"zone-1"}`)
+
+	pushed, err := flushSpool(context.Background(), store, signer, dir, "tenant-1", "zone-1")
+	if err != nil {
+		t.Fatalf("flushSpool() error = %v", err)
+	}
+	if pushed != 1 {
+		t.Fatalf("pushed = %d, want 1", pushed)
+	}
+
+	keys := store.keys()
+	var snapshotKey, manifestKey string
+	for _, k := range keys {
+		if strings.HasSuffix(k, ".manifest.json") {
+			manifestKey = k
+		} else {
+			snapshotKey = k
+		}
+	}
+	if snapshotKey == "" || manifestKey == "" {
+		t.Fatalf("store.keys() = %v, want one snapshot key and one .manifest.json key", keys)
+	}
+	if manifestKey != snapshotKey+".manifest.json" {
+		t.Errorf("manifestKey = %q, want %q", manifestKey, snapshotKey+".manifest.json")
+	}
+
+	var manifest Manifest
+	if err := json.Unmarshal(store.puts[manifestKey], &manifest); err != nil {
+		t.Fatalf("unmarshal manifest error = %v", err)
+	}
+	ok, err := verifyManifest(manifest, store.puts[snapshotKey])
+	if err != nil {
+		t.Fatalf("verifyManifest() error = %v", err)
+	}
+	if !ok {
+		t.Error("verifyManifest() = false, want true for a manifest pushed by flushSpool")
+	}
+}
+
+func TestFlushSpool_WithoutSigner_PushesNoManifest(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	writeSpoolFile(t, dir, "1000.json.gz", "content")
+
+	if _, err := flushSpool(context.Background(), store, nil, dir, "tenant-1", "zone-1"); err != nil {
+		t.Fatalf("flushSpool() error = %v", err)
+	}
+
+	for _, k := range store.keys() {
+		if strings.HasSuffix(k, ".manifest.json") {
+			t.Errorf("found manifest key %q with no signer configured, want none", k)
+		}
+	}
+}
+
+func TestFlushSpool_WithSigner_ManifestPushFailureLeavesFileForRetry(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+	store.failKeySuffix = ".manifest.json"
+	signer := testSigner(t)
+
+	writeSpoolFile(t, dir, "1000.json.gz", "content")
+
+	pushed, err := flushSpool(context.Background(), store, signer, dir, "tenant-1", "zone-1")
+	if err == nil {
+		t.Fatal("flushSpool() error = nil, want an error when the manifest push fails")
+	}
+	if pushed != 0 {
+		t.Errorf("pushed = %d, want 0 (manifest push failed, file not counted as pushed)", pushed)
+	}
+
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("spool dir has %d entries, want 1 (retained for next cycle since the manifest never landed)", len(entries))
+	}
+}
+
+func TestRunExporter_WithSignerAndStore_PushesSignedManifest(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+	signer := testSigner(t)
+
+	ev := Event{Addr: "10.0.4.8", OK: true, TS: 1000, NodeIDs: []string{"room-11"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+
+	stop := runExporter(ctx, rdb, ExporterConfig{
+		ZoneID: "zone-1", TenantID: "tenant-1", Interval: 20 * time.Millisecond,
+		SpoolDir: dir, Store: store, Signer: signer,
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	var hasManifest bool
+	for time.Now().Before(deadline) {
+		for _, k := range store.keys() {
+			if strings.HasSuffix(k, ".manifest.json") {
+				hasManifest = true
+			}
+		}
+		if hasManifest {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop()
+
+	if !hasManifest {
+		t.Fatal("no manifest pushed to store within deadline")
 	}
 }

@@ -254,6 +254,7 @@ func main() {
 	s3Endpoint := flag.String("s3-endpoint", getenv("ARGUS_S3_ENDPOINT", ""), "object storage endpoint override (empty = real AWS S3; set for MinIO/S3-compatible endpoints)")
 	s3AccessKey := flag.String("s3-access-key", getenv("ARGUS_S3_ACCESS_KEY", ""), "object storage access key (empty = use the AWS SDK's default credential chain)")
 	s3SecretKey := flag.String("s3-secret-key", getenv("ARGUS_S3_SECRET_KEY", ""), "object storage secret key (empty = use the AWS SDK's default credential chain)")
+	signingKeyPath := flag.String("signing-key-path", getenv("ARGUS_SIGNING_KEY_PATH", ""), "path to this zone's ed25519 signing key (empty = don't sign pushed snapshots); generated on first run if the file doesn't exist yet")
 
 	flag.Parse()
 
@@ -328,12 +329,22 @@ func main() {
 		} else {
 			log.Printf("role=%s: exporter enabled, interval=%v, spool-dir=%s, no s3-bucket configured (spool-only)", role, *exportInterval, *spoolDir)
 		}
+
+		var signer *Signer
+		if *signingKeyPath != "" {
+			signer, err = loadOrGenerateSigningKey(*signingKeyPath)
+			if err != nil {
+				log.Fatalf("failed to load/generate signing key: %v", err)
+			}
+		}
+
 		stopExporter = runExporter(ctx, rdb, ExporterConfig{
 			ZoneID:   *zoneID,
 			TenantID: *tenantID,
 			Interval: *exportInterval,
 			SpoolDir: *spoolDir,
 			Store:    store,
+			Signer:   signer,
 		})
 	}
 
