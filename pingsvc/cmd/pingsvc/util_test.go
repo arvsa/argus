@@ -73,18 +73,30 @@ func TestSplitLines(t *testing.T) {
 	}
 }
 
-func TestLoadTargets_NoFile(t *testing.T) {
-	got := loadTargets("")
-	want := []string{"8.8.8.8", "1.1.1.1"}
-
+func assertTargetsEqual(t *testing.T, got, want []Target) {
+	t.Helper()
 	if len(got) != len(want) {
-		t.Fatalf("loadTargets(\"\") = %v, want %v", got, want)
+		t.Fatalf("got %+v, want %+v", got, want)
 	}
 	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("loadTargets(\"\")[%d] = %q, want %q", i, got[i], want[i])
+		if got[i].Addr != want[i].Addr {
+			t.Errorf("targets[%d].Addr = %q, want %q", i, got[i].Addr, want[i].Addr)
+		}
+		if len(got[i].NodeIDs) != len(want[i].NodeIDs) {
+			t.Fatalf("targets[%d].NodeIDs = %v, want %v", i, got[i].NodeIDs, want[i].NodeIDs)
+		}
+		for j := range got[i].NodeIDs {
+			if got[i].NodeIDs[j] != want[i].NodeIDs[j] {
+				t.Errorf("targets[%d].NodeIDs[%d] = %q, want %q", i, j, got[i].NodeIDs[j], want[i].NodeIDs[j])
+			}
 		}
 	}
+}
+
+func TestLoadTargets_NoFile(t *testing.T) {
+	got := loadTargets("")
+	want := []Target{{Addr: "8.8.8.8"}, {Addr: "1.1.1.1"}}
+	assertTargetsEqual(t, got, want)
 }
 
 func TestLoadTargets_FromFile(t *testing.T) {
@@ -96,16 +108,8 @@ func TestLoadTargets_FromFile(t *testing.T) {
 	}
 
 	got := loadTargets(path)
-	want := []string{"10.0.0.1", "10.0.0.2", "10.0.0.3"}
-
-	if len(got) != len(want) {
-		t.Fatalf("loadTargets(%q) = %v, want %v", path, got, want)
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("loadTargets(%q)[%d] = %q, want %q", path, i, got[i], want[i])
-		}
-	}
+	want := []Target{{Addr: "10.0.0.1"}, {Addr: "10.0.0.2"}, {Addr: "10.0.0.3"}}
+	assertTargetsEqual(t, got, want)
 }
 
 func TestLoadTargets_MissingFileFallsBackToEmpty(t *testing.T) {
@@ -116,4 +120,36 @@ func TestLoadTargets_MissingFileFallsBackToEmpty(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("loadTargets(missing file) = %v, want empty slice", got)
 	}
+}
+
+func TestLoadTargets_WithNodeIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "targets.txt")
+	// A line with a comma carries "addr,ancestor1;ancestor2;...". A bare-IP
+	// line (no comma) stays backward compatible with existing target files
+	// (plan/dynamic-hierarchy-multi-zone-architecture.md §4.3).
+	content := "10.0.0.1,campus-1;building-2;room-3\n10.0.0.2\n10.0.0.3,node-9\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write fixture file: %v", err)
+	}
+
+	got := loadTargets(path)
+	want := []Target{
+		{Addr: "10.0.0.1", NodeIDs: []string{"campus-1", "building-2", "room-3"}},
+		{Addr: "10.0.0.2"},
+		{Addr: "10.0.0.3", NodeIDs: []string{"node-9"}},
+	}
+	assertTargetsEqual(t, got, want)
+}
+
+func TestLoadTargets_TrailingCommaWithNoAncestorsYieldsNoNodeIDs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "targets.txt")
+	if err := os.WriteFile(path, []byte("10.0.0.1,\n"), 0o644); err != nil {
+		t.Fatalf("failed to write fixture file: %v", err)
+	}
+
+	got := loadTargets(path)
+	want := []Target{{Addr: "10.0.0.1"}}
+	assertTargetsEqual(t, got, want)
 }

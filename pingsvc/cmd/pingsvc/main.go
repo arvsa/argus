@@ -123,10 +123,14 @@ end
 return 1
 `
 
+// Target is a ping destination plus its known ancestor chain in the
+// generalized Node hierarchy (plan/dynamic-hierarchy-multi-zone-architecture.md
+// §4.3). NodeIDs is nil for targets loaded from a plain bare-address file
+// (the common case today), and populated for targets loaded from the
+// richer "addr,ancestor1;ancestor2;..." format.
 type Target struct {
-	Addr   string
-	RoomID string
-	BldgID string
+	Addr    string
+	NodeIDs []string
 }
 
 // evalArgs builds the KEYS[1] address and ARGV list used by
@@ -266,13 +270,21 @@ func main() {
 		log.Fatalf("failed to load lua script: %v", err)
 	}
 
+	// addr -> ancestor chain, looked up by workers when building each Event
+	// so a device's stats:node:<id> aggregation follows it from the target
+	// file, not just from state-change events built after this point.
+	targetsByAddr := make(map[string][]string, len(targets))
+	for _, t := range targets {
+		targetsByAddr[t.Addr] = t.NodeIDs
+	}
+
 	// pre-seed state and index so /state returns all devices immediately
 	for _, t := range targets {
 		ts := nowMs()
-		ev := Event{Addr: t, OK: false, TS: ts, Interval: int64(interval.Milliseconds())}
+		ev := Event{Addr: t.Addr, OK: false, TS: ts, Interval: int64(interval.Milliseconds()), NodeIDs: t.NodeIDs}
 		raw, _ := json.Marshal(ev)
-		_ = rdb.HSet(ctx, "pings:state", t, raw).Err()
-		_ = rdb.ZAdd(ctx, "pings:index", redis.Z{Score: float64(ts), Member: t}).Err()
+		_ = rdb.HSet(ctx, "pings:state", t.Addr, raw).Err()
+		_ = rdb.ZAdd(ctx, "pings:index", redis.Z{Score: float64(ts), Member: t.Addr}).Err()
 	}
 
 	log.Printf("starting pingsvc: %d targets, interval=%v, timeout=%v, redis=%s, workers=%d, batch=%d",
@@ -323,7 +335,7 @@ func main() {
 					p, err := ping.NewPinger(addr)
 					if err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error()}
+						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetsByAddr[addr]}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -337,7 +349,7 @@ func main() {
 					p.Timeout = *timeout
 					if err := p.Run(); err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error()}
+						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetsByAddr[addr]}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -369,8 +381,7 @@ func main() {
 						metrStateChanges.WithLabelValues("down").Inc()
 					}
 
-					// Build event. If you have room/bldg mapping for the addr, populate RoomID/BldgID here.
-					ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp}
+					ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp, NodeIDs: targetsByAddr[addr]}
 					raw, _ := json.Marshal(ev)
 					select {
 					case results <- raw:
@@ -508,7 +519,7 @@ loop:
 			// non-blocking enqueue: if jobs buffer is full we skip
 			for _, t := range targets {
 				select {
-				case jobs <- t:
+				case jobs <- t.Addr:
 				default:
 					metrJobsDropped.Inc()
 				}
@@ -529,15 +540,31 @@ loop:
 	log.Println("shutting down")
 }
 
-// loadTargets is placeholder — implement same as your original logic:
-func loadTargets(targetsFile string) []string {
-	// simplified: same behavior as your code
+// loadTargets reads the -targets file, one target per line. Each line is
+// either a bare address ("10.0.0.1", backward compatible with existing
+// target files) or "addr,ancestor1;ancestor2;..." to attach that device's
+// full ancestor chain in the Node hierarchy for per-node aggregation (see
+// Target's doc comment and plan §4.3/§4.2).
+func loadTargets(targetsFile string) []Target {
 	if targetsFile != "" {
 		b, _ := os.ReadFile(targetsFile)
-		return splitLines(string(b))
+		lines := splitLines(string(b))
+		out := make([]Target, len(lines))
+		for i, line := range lines {
+			out[i] = parseTargetLine(line)
+		}
+		return out
 	}
 	// example dummies
-	return []string{"8.8.8.8", "1.1.1.1"}
+	return []Target{{Addr: "8.8.8.8"}, {Addr: "1.1.1.1"}}
+}
+
+func parseTargetLine(line string) Target {
+	addr, nodeIDsField, hasNodeIDs := strings.Cut(line, ",")
+	if !hasNodeIDs || nodeIDsField == "" {
+		return Target{Addr: addr}
+	}
+	return Target{Addr: addr, NodeIDs: strings.Split(nodeIDsField, ";")}
 }
 
 // getenv, splitLines, waitForRedis copied/kept from your original code
