@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,11 +17,17 @@ import (
 )
 
 // ExporterConfig configures runExporter. See
-// plan/dynamic-hierarchy-multi-zone-architecture.md §4.3.
+// plan/dynamic-hierarchy-multi-zone-architecture.md §4.3-4.4.
 type ExporterConfig struct {
 	ZoneID   string
+	TenantID string
 	Interval time.Duration
 	SpoolDir string
+	// Store is optional. When nil, the exporter behaves exactly as it did
+	// in Phase 1: the local spool is the terminal sink. When set, each
+	// cycle also flushes the spool to object storage, removing files on
+	// successful push and leaving them for retry on failure.
+	Store ObjectStore
 }
 
 // Snapshot is the periodic aggregated payload an argus-client exports.
@@ -169,4 +176,80 @@ func runExportCycle(ctx context.Context, rdb redis.Cmdable, cfg ExporterConfig) 
 	}
 	metrExporterSnapshotsWritten.Inc()
 	log.Printf("exporter: wrote snapshot to %s (%d nodes, %d devices)", path, len(snap.Nodes), len(snap.Devices))
+
+	if cfg.Store == nil {
+		return
+	}
+	pushed, err := flushSpool(ctx, cfg.Store, cfg.SpoolDir, cfg.TenantID, cfg.ZoneID)
+	if err != nil {
+		metrExporterPushErrors.Inc()
+		log.Printf("exporter: push failed after %d file(s) this cycle: %v", pushed, err)
+		return
+	}
+	if pushed > 0 {
+		metrExporterSnapshotsPushed.Add(float64(pushed))
+		log.Printf("exporter: pushed %d snapshot(s) to object storage", pushed)
+	}
+}
+
+// objectKeyForSpoolFile derives the object storage key for a spooled
+// snapshot file: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<unix_ts>.json.gz (plan
+// §4.4). The date parts come from the timestamp embedded in the filename
+// itself, so no separate metadata needs to travel alongside the file.
+func objectKeyForSpoolFile(tenantID, zoneID, filename string) (string, error) {
+	tsPart := strings.TrimSuffix(filename, ".json.gz")
+	tsMs, err := strconv.ParseInt(tsPart, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("parse timestamp from spool filename %q: %w", filename, err)
+	}
+	t := time.UnixMilli(tsMs).UTC()
+	return fmt.Sprintf("%s/%s/%04d/%02d/%02d/%02d/%s",
+		tenantID, zoneID, t.Year(), t.Month(), t.Day(), t.Hour(), filename), nil
+}
+
+// flushSpool pushes every file currently in spoolDir to store, oldest first
+// (filenames sort lexicographically by embedded timestamp). It stops at the
+// first failed push rather than retrying every remaining file against a
+// possibly-down endpoint every cycle -- the next export cycle retries
+// starting from the same oldest file. Successfully pushed files are removed
+// from the spool; files with an unparseable name are skipped (not
+// retryable) rather than blocking every file behind them forever.
+func flushSpool(ctx context.Context, store ObjectStore, spoolDir, tenantID, zoneID string) (pushed int, err error) {
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("read spool dir: %w", err)
+	}
+
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		key, err := objectKeyForSpoolFile(tenantID, zoneID, name)
+		if err != nil {
+			log.Printf("exporter: skipping unparseable spool file %s: %v", name, err)
+			continue
+		}
+
+		path := filepath.Join(spoolDir, name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return pushed, fmt.Errorf("read spool file %s: %w", path, err)
+		}
+		if err := store.Put(ctx, key, data); err != nil {
+			return pushed, fmt.Errorf("push %s: %w", name, err)
+		}
+		if err := os.Remove(path); err != nil {
+			log.Printf("exporter: pushed %s but failed to remove from spool: %v", name, err)
+		}
+		pushed++
+	}
+	return pushed, nil
 }

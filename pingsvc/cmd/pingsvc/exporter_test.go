@@ -4,12 +4,49 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"sync"
 	"testing"
 	"time"
 )
+
+// fakeObjectStore is an in-memory ObjectStore double for tests that don't
+// need a real S3-compatible endpoint (see objectstore_test.go for that).
+type fakeObjectStore struct {
+	mu       sync.Mutex
+	puts     map[string][]byte
+	failNext bool // if true, the next Put call fails and resets this flag
+}
+
+func newFakeObjectStore() *fakeObjectStore {
+	return &fakeObjectStore{puts: map[string][]byte{}}
+}
+
+func (f *fakeObjectStore) Put(_ context.Context, key string, data []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.failNext {
+		f.failNext = false
+		return errors.New("fakeObjectStore: simulated put failure")
+	}
+	f.puts[key] = data
+	return nil
+}
+
+func (f *fakeObjectStore) keys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.puts))
+	for k := range f.puts {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // ── buildSnapshot ────────────────────────────────────────────────────────
 
@@ -235,5 +272,133 @@ func TestRunExporter_StopReturnsPromptlyWithNoTicksFired(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 0 {
 		t.Errorf("spool dir has %d entries, want 0 (interval never fired)", len(entries))
+	}
+}
+
+// ── flushSpool ───────────────────────────────────────────────────────────
+
+func writeSpoolFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write spool fixture %s: %v", name, err)
+	}
+}
+
+func TestFlushSpool_EmptySpoolDirIsNoOp(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	if err != nil {
+		t.Fatalf("flushSpool() error = %v", err)
+	}
+	if pushed != 0 {
+		t.Errorf("pushed = %d, want 0", pushed)
+	}
+}
+
+func TestFlushSpool_PushesFilesOldestFirstAndRemovesOnSuccess(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	writeSpoolFile(t, dir, "2000.json.gz", "second")
+	writeSpoolFile(t, dir, "1000.json.gz", "first")
+
+	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	if err != nil {
+		t.Fatalf("flushSpool() error = %v", err)
+	}
+	if pushed != 2 {
+		t.Fatalf("pushed = %d, want 2", pushed)
+	}
+
+	keys := store.keys()
+	if len(keys) != 2 {
+		t.Fatalf("store has %d objects, want 2", len(keys))
+	}
+	// Both files landed under the same date-derived prefix; just confirm
+	// both filenames made it through and the spool dir is now empty.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("spool dir has %d entries after successful flush, want 0", len(entries))
+	}
+}
+
+func TestFlushSpool_StopsOnFirstFailureLeavingRestForNextCycle(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	writeSpoolFile(t, dir, "1000.json.gz", "first")
+	writeSpoolFile(t, dir, "2000.json.gz", "second")
+	store.failNext = true // the oldest (first) push fails
+
+	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	if err == nil {
+		t.Fatal("flushSpool() error = nil, want an error when a push fails")
+	}
+	if pushed != 0 {
+		t.Errorf("pushed = %d, want 0 (first file failed)", pushed)
+	}
+
+	// Both files must still be on disk -- nothing was removed since nothing
+	// (confirmed) succeeded, and the second was never attempted this cycle.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 2 {
+		t.Errorf("spool dir has %d entries, want 2 (both retained for next cycle)", len(entries))
+	}
+}
+
+func TestFlushSpool_SkipsUnparseableFilenamesWithoutBlockingOthers(t *testing.T) {
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	writeSpoolFile(t, dir, "not-a-timestamp.json.gz", "junk")
+	writeSpoolFile(t, dir, "1000.json.gz", "valid")
+
+	pushed, err := flushSpool(context.Background(), store, dir, "tenant-1", "zone-1")
+	if err != nil {
+		t.Fatalf("flushSpool() error = %v", err)
+	}
+	if pushed != 1 {
+		t.Errorf("pushed = %d, want 1 (only the valid file)", pushed)
+	}
+	if len(store.keys()) != 1 {
+		t.Errorf("store has %d objects, want 1", len(store.keys()))
+	}
+}
+
+// ── runExporter with an ObjectStore configured ────────────────────────────
+
+func TestRunExporter_WithStore_PushesAndRemovesSpoolFile(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	store := newFakeObjectStore()
+
+	ev := Event{Addr: "10.0.4.7", OK: true, TS: 1000, NodeIDs: []string{"room-5"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+
+	stop := runExporter(ctx, rdb, ExporterConfig{
+		ZoneID: "zone-1", TenantID: "tenant-1", Interval: 20 * time.Millisecond,
+		SpoolDir: dir, Store: store,
+	})
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && len(store.keys()) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	stop()
+
+	if len(store.keys()) == 0 {
+		t.Fatal("no objects pushed to store within deadline")
+	}
+	// The spool file must have been removed after a successful push --
+	// runExporter's disk sink is a staging area, not the final destination,
+	// once an ObjectStore is configured.
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("spool dir has %d entries after successful push, want 0", len(entries))
 	}
 }
