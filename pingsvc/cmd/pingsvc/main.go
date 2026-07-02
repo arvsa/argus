@@ -244,7 +244,7 @@ func main() {
 	batchSize := flag.Int("batch", 500, "redis pipeline batch size")
 	batchFlushMs := flag.Int("batch-flush-ms", 200, "max milliseconds before flushing a partial batch")
 	metricsAddr := flag.String("metrics-addr", ":9090", "address to serve /metrics on")
-	roleFlag := flag.String("role", string(RolePingsvc), "operating role: pingsvc|exporter|both")
+	roleFlag := flag.String("role", getenv("ARGUS_ROLE", string(RolePingsvc)), "operating role: pingsvc|exporter|both")
 	zoneID := flag.String("zone-id", getenv("ARGUS_ZONE_ID", "default"), "zone identifier included in exported snapshots")
 	tenantID := flag.String("tenant-id", getenv("ARGUS_TENANT_ID", "default"), "tenant identifier used as the object storage key prefix")
 	exportInterval := flag.Duration("export-interval", 30*time.Second, "how often the exporter builds and spools a snapshot")
