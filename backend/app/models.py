@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import EmailStr
-from sqlalchemy import DateTime
+from sqlalchemy import JSON, Column, DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -259,3 +259,78 @@ class Device(DeviceBase, table=True):
         foreign_key="room.id", nullable=True, ondelete="CASCADE", default=None,
     )
     room: "Room" = Relationship(back_populates="devices")
+
+
+# ========== Dynamic hierarchy (NodeType / Node) ============
+#
+# Generalizes the fixed Campus->Building->Room chain above into an
+# admin-configurable, arbitrary-depth tree per tenant. See
+# plan/dynamic-hierarchy-multi-zone-architecture.md §4.1.
+
+class NodeTypeBase(SQLModel):
+    tenant_id: str = Field(max_length=255, index=True)
+    name: str = Field(max_length=255)
+    rank: int
+
+class NodeTypeCreate(NodeTypeBase):
+    parent_type_id: uuid.UUID | None = None
+
+class NodeType(NodeTypeBase, table=True):
+    __tablename__ = "node_type"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "rank", name="uq_node_type_tenant_rank"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    parent_type_id: uuid.UUID | None = Field(
+        default=None, foreign_key="node_type.id", nullable=True, ondelete="CASCADE",
+    )
+
+class NodeTypePublic(NodeTypeBase):
+    id: uuid.UUID
+    created_at: datetime | None = None
+    parent_type_id: uuid.UUID | None = None
+
+class NodeTypesPublic(SQLModel):
+    data: list[NodeTypePublic]
+    count: int
+
+
+class NodeBase(SQLModel):
+    name: str = Field(max_length=255)
+
+class NodeCreate(NodeBase):
+    node_type_id: uuid.UUID
+    parent_id: uuid.UUID | None = None
+
+class Node(NodeBase, table=True):
+    __tablename__ = "node"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    created_at: datetime | None = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    node_type_id: uuid.UUID = Field(foreign_key="node_type.id", nullable=False)
+    parent_id: uuid.UUID | None = Field(
+        default=None, foreign_key="node.id", nullable=True, ondelete="CASCADE",
+    )
+    # Denormalized ancestor id chain (root-first), recomputed only on
+    # structural writes, so per-node aggregation never needs a recursive
+    # query on the hot device-state-change path.
+    path_ids: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+
+class NodePublic(NodeBase):
+    id: uuid.UUID
+    created_at: datetime | None = None
+    node_type_id: uuid.UUID
+    parent_id: uuid.UUID | None = None
+    path_ids: list[str]
+
+class NodesPublic(SQLModel):
+    data: list[NodePublic]
+    count: int

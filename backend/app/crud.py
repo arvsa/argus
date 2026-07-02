@@ -9,6 +9,10 @@ from app.models import (
     DeviceCreate,
     Item,
     ItemCreate,
+    Node,
+    NodeCreate,
+    NodeType,
+    NodeTypeCreate,
     User,
     UserCreate,
     UserUpdate,
@@ -82,3 +86,56 @@ def create_devices(*, session: Session, devices: list[Device]) -> list[Device]:
     for device in db_devices:
         session.refresh(device)
     return db_devices
+
+
+def create_node_type(
+    *, session: Session, node_type_create: NodeTypeCreate
+) -> NodeType:
+    """Create a NodeType, validating it extends its tenant's rank chain by
+    exactly one level. See plan/dynamic-hierarchy-multi-zone-architecture.md §4.1."""
+    if node_type_create.parent_type_id is None:
+        if node_type_create.rank != 0:
+            raise ValueError("a NodeType with no parent_type_id must have rank 0")
+    else:
+        parent_type = session.get(NodeType, node_type_create.parent_type_id)
+        if parent_type is None:
+            raise ValueError("parent_type_id does not reference an existing NodeType")
+        if parent_type.tenant_id != node_type_create.tenant_id:
+            raise ValueError("parent_type_id must belong to the same tenant_id")
+        if node_type_create.rank != parent_type.rank + 1:
+            raise ValueError("rank must be exactly one greater than parent_type_id's rank")
+
+    db_obj = NodeType.model_validate(node_type_create)
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def create_node(*, session: Session, node_create: NodeCreate) -> Node:
+    """Create a Node, validating it against its NodeType's parent chain and
+    computing its denormalized path_ids. See
+    plan/dynamic-hierarchy-multi-zone-architecture.md §4.1-4.2."""
+    node_type = session.get(NodeType, node_create.node_type_id)
+    if node_type is None:
+        raise ValueError("node_type_id does not reference an existing NodeType")
+
+    if node_create.parent_id is None:
+        if node_type.parent_type_id is not None:
+            raise ValueError("this node_type requires a parent_id (parent_type_id is set)")
+        path_ids: list[str] = []
+    else:
+        parent = session.get(Node, node_create.parent_id)
+        if parent is None:
+            raise ValueError("parent_id does not reference an existing Node")
+        if parent.node_type_id != node_type.parent_type_id:
+            raise ValueError(
+                "parent node's node_type does not match this node_type's parent_type_id"
+            )
+        path_ids = [*parent.path_ids, str(parent.id)]
+
+    db_obj = Node.model_validate(node_create, update={"path_ids": path_ids})
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
