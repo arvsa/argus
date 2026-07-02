@@ -216,6 +216,14 @@ var (
 		Name: "pings_jobs_dropped_total",
 		Help: "Number of job enqueues dropped due to full jobs channel.",
 	})
+	metrExporterSnapshotsWritten = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pings_exporter_snapshots_written_total",
+		Help: "Number of snapshot files successfully written to the exporter's local spool.",
+	})
+	metrExporterErrors = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "pings_exporter_errors_total",
+		Help: "Number of exporter cycles that failed to build or write a snapshot.",
+	})
 )
 
 func main() {
@@ -229,6 +237,9 @@ func main() {
 	batchFlushMs := flag.Int("batch-flush-ms", 200, "max milliseconds before flushing a partial batch")
 	metricsAddr := flag.String("metrics-addr", ":9090", "address to serve /metrics on")
 	roleFlag := flag.String("role", string(RolePingsvc), "operating role: pingsvc|exporter|both")
+	zoneID := flag.String("zone-id", getenv("ARGUS_ZONE_ID", "default"), "zone identifier included in exported snapshots")
+	exportInterval := flag.Duration("export-interval", 30*time.Second, "how often the exporter builds and spools a snapshot")
+	spoolDir := flag.String("spool-dir", getenv("ARGUS_SPOOL_DIR", "/var/lib/argus/pending"), "local directory the exporter writes snapshot files to")
 
 	flag.Parse()
 
@@ -248,7 +259,22 @@ func main() {
 		metrRedisErrors,
 		metrRedisPublishes,
 		metrJobsDropped,
+		metrExporterSnapshotsWritten,
+		metrExporterErrors,
 	)
+	prometheus.MustRegister(prometheus.NewGaugeFunc(
+		prometheus.GaugeOpts{
+			Name: "pings_exporter_spool_files",
+			Help: "Number of snapshot files currently sitting in the exporter's local spool directory.",
+		},
+		func() float64 {
+			entries, err := os.ReadDir(*spoolDir)
+			if err != nil {
+				return 0
+			}
+			return float64(len(entries))
+		},
+	))
 
 	// Start metrics server
 	go func() {
@@ -267,10 +293,14 @@ func main() {
 		log.Fatalf("redis not available: %v", err)
 	}
 
+	var stopExporter func()
 	if role.RunsExporter() {
-		// TODO(Phase 1 follow-up): real snapshot generation + local disk
-		// spool. See plan/dynamic-hierarchy-multi-zone-architecture.md §4.3.
-		log.Printf("role=%s: exporter enabled (not yet implemented)", role)
+		log.Printf("role=%s: exporter enabled, interval=%v, spool-dir=%s", role, *exportInterval, *spoolDir)
+		stopExporter = runExporter(ctx, rdb, ExporterConfig{
+			ZoneID:   *zoneID,
+			Interval: *exportInterval,
+			SpoolDir: *spoolDir,
+		})
 	}
 
 	if !role.RunsPingPipeline() {
@@ -278,6 +308,9 @@ func main() {
 		sig := make(chan os.Signal, 1)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 		<-sig
+		if stopExporter != nil {
+			stopExporter()
+		}
 		log.Println("shutting down")
 		return
 	}
@@ -557,6 +590,10 @@ loop:
 	close(results)
 	batcherCancel()
 	batchWg.Wait()
+
+	if stopExporter != nil {
+		stopExporter()
+	}
 
 	log.Println("shutting down")
 }
