@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import EmailStr
-from sqlalchemy import JSON, Column, DateTime, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Column, DateTime, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -363,6 +363,11 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     __tablename__ = "client_snapshot"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    # unix-ms timestamp (pingsvc's nowMs(), ~13 digits) needs BigInteger --
+    # a plain MySQL INT overflows on real timestamps (caught by an
+    # end-to-end smoke test; small test fixture values like 1000 never
+    # exercised this).
+    snapshot_ts: int = Field(sa_type=BigInteger)
     nodes_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     devices_json: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
     # None = no ZoneSigningKey registered for this zone at ingest time, so
@@ -397,7 +402,7 @@ class ZoneSummary(ZoneSummaryBase, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     up_count: int = 0
     down_count: int = 0
-    last_snapshot_ts: int | None = None
+    last_snapshot_ts: int | None = Field(default=None, sa_type=BigInteger)
     last_pulled_at: datetime | None = Field(
         default=None, sa_type=DateTime(timezone=True),  # type: ignore
     )

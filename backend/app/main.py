@@ -9,6 +9,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 from app.api.main import api_router
 from app.core.config import settings
+from app.core.ingestion import ingestion_task
 from app.core.redis import (
     create_async_redis_client,
     create_sync_redis_client,
@@ -64,6 +65,11 @@ async def lifespan(app: FastAPI):
     stop_event = asyncio.Event()
     listener_task = asyncio.create_task(redis_listener_task(stop_event))
 
+    # start argus-server ingestion polling (no-ops if S3_BUCKET unset, see
+    # plan/dynamic-hierarchy-multi-zone-architecture.md §4.5)
+    ingestion_stop_event = asyncio.Event()
+    ingestion_bg_task = asyncio.create_task(ingestion_task(ingestion_stop_event))
+
     yield
 
     # shutdown: stop listener and close clients
@@ -75,6 +81,16 @@ async def lifespan(app: FastAPI):
         listener_task.cancel()
         try:
             await listener_task
+        except Exception:
+            pass
+
+    ingestion_stop_event.set()
+    try:
+        await ingestion_bg_task
+    except Exception:
+        ingestion_bg_task.cancel()
+        try:
+            await ingestion_bg_task
         except Exception:
             pass
 
