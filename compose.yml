@@ -108,6 +108,15 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
+      # argus-server ingestion (unset S3_BUCKET = ingestion task disabled,
+      # this instance behaves as a plain zone backend -- see README.md)
+      - S3_BUCKET=${S3_BUCKET:-}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - INGESTION_INTERVAL_SECONDS=${INGESTION_INTERVAL_SECONDS:-60}
+      - STALENESS_THRESHOLD_SECONDS=${STALENESS_THRESHOLD_SECONDS:-120}
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
@@ -166,6 +175,18 @@ services:
       - PINGSVC_CONCURRENCY=${PINGSVC_CONCURRENCY:-200}
       - PINGSVC_GLOBAL_QPS=${PINGSVC_GLOBAL_QPS:-500}
       - PINGSVC_PER_HOST_TIMEOUT=${PINGSVC_PER_HOST_TIMEOUT:-2s}
+      # argus-client mode (unset ARGUS_ROLE = pingsvc-only, no exporter --
+      # see README.md for running this as a full argus-client)
+      - ARGUS_ROLE=${ARGUS_ROLE:-pingsvc}
+      - ARGUS_ZONE_ID=${ARGUS_ZONE_ID:-default}
+      - ARGUS_TENANT_ID=${ARGUS_TENANT_ID:-default}
+      - ARGUS_SPOOL_DIR=${ARGUS_SPOOL_DIR:-/var/lib/argus/pending}
+      - ARGUS_S3_BUCKET=${ARGUS_S3_BUCKET:-}
+      - ARGUS_S3_REGION=${ARGUS_S3_REGION:-us-east-1}
+      - ARGUS_S3_ENDPOINT=${ARGUS_S3_ENDPOINT:-}
+      - ARGUS_S3_ACCESS_KEY=${ARGUS_S3_ACCESS_KEY:-}
+      - ARGUS_S3_SECRET_KEY=${ARGUS_S3_SECRET_KEY:-}
+      - ARGUS_SIGNING_KEY_PATH=${ARGUS_SIGNING_KEY_PATH:-}
     volumes:
       - ./pingsvc/targets.txt:/etc/pingsvc/targets.txt:ro
     # If your pingsvc exposes an HTTP metrics or admin port (optional), map it:

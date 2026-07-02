@@ -1,18 +1,18 @@
-# FastAPI Project - Deployment
+# Argus - Deployment
 
-You can deploy the project using Docker Compose to a remote server.
+You can deploy Argus using Docker Compose to a remote server — as a single stack, or as one or more `argus-client` zones plus a central `argus-server` (see [Multi-zone configuration](#multi-zone-configuration)).
 
 This project expects you to have a Traefik proxy handling communication to the outside world and HTTPS certificates.
 
 You can use CI/CD (continuous integration and continuous deployment) systems to deploy automatically, there are already configurations to do it with GitHub Actions.
 
-But you have to configure a couple things first. 🤓
+But you have to configure a couple things first.
 
 ## Preparation
 
 * Have a remote server ready and available.
 * Configure the DNS records of your domain to point to the IP of the server you just created.
-* Configure a wildcard subdomain for your domain, so that you can have multiple subdomains for different services, e.g. `*.fastapi-project.example.com`. This will be useful for accessing different components, like `dashboard.fastapi-project.example.com`, `api.fastapi-project.example.com`, `traefik.fastapi-project.example.com`, `adminer.fastapi-project.example.com`, etc. And also for `staging`, like `dashboard.staging.fastapi-project.example.com`, `adminer.staging.fastapi-project.example.com`, etc.
+* Configure a wildcard subdomain for your domain, so that you can have multiple subdomains for different services, e.g. `*.argus.example.com`. This will be useful for accessing different components, like `dashboard.argus.example.com`, `api.argus.example.com`, `traefik.argus.example.com`, `adminer.argus.example.com`, etc. And also for `staging`, like `dashboard.staging.argus.example.com`, `adminer.staging.argus.example.com`, etc.
 * Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).
 
 ## Public Traefik
@@ -78,7 +78,7 @@ echo $HASHED_PASSWORD
 * Create an environment variable with the domain name for your server, e.g.:
 
 ```bash
-export DOMAIN=fastapi-project.example.com
+export DOMAIN=argus.example.com
 ```
 
 * Create an environment variable with the email for Let's Encrypt, e.g.:
@@ -103,9 +103,9 @@ Now with the environment variables set and the `compose.traefik.yml` in place, y
 docker compose -f compose.traefik.yml up -d
 ```
 
-## Deploy the FastAPI Project
+## Deploy Argus
 
-Now that you have Traefik in place you can deploy your FastAPI project with Docker Compose.
+Now that you have Traefik in place you can deploy Argus with Docker Compose.
 
 **Note**: You might want to jump ahead to the section about Continuous Deployment with GitHub Actions.
 
@@ -144,13 +144,13 @@ export ENVIRONMENT=production
 Set the `DOMAIN`, by default `localhost` (for development), but when deploying you would use your own domain, for example:
 
 ```bash
-export DOMAIN=fastapi-project.example.com
+export DOMAIN=argus.example.com
 ```
 
-Set the `POSTGRES_PASSWORD` to something different than `changethis`:
+Set the `MYSQL_ROOT_PASSWORD` to something different than `changethis`:
 
 ```bash
-export POSTGRES_PASSWORD="changethis"
+export MYSQL_ROOT_PASSWORD="changethis"
 ```
 
 Set the `SECRET_KEY`, used to sign tokens:
@@ -176,18 +176,20 @@ export BACKEND_CORS_ORIGINS="https://dashboard.${DOMAIN?Variable not set},https:
 You can set several other environment variables:
 
 * `PROJECT_NAME`: The name of the project, used in the API for the docs and emails.
-* `STACK_NAME`: The name of the stack used for Docker Compose labels and project name, this should be different for `staging`, `production`, etc. You could use the same domain replacing dots with dashes, e.g. `fastapi-project-example-com` and `staging-fastapi-project-example-com`.
+* `STACK_NAME`: The name of the stack used for Docker Compose labels and project name, this should be different for `staging`, `production`, etc. You could use the same domain replacing dots with dashes, e.g. `argus-example-com` and `staging-argus-example-com`.
 * `BACKEND_CORS_ORIGINS`: A list of allowed CORS origins separated by commas.
 * `FIRST_SUPERUSER`: The email of the first superuser, this superuser will be the one that can create new users.
 * `SMTP_HOST`: The SMTP server host to send emails, this would come from your email provider (E.g. Mailgun, Sparkpost, Sendgrid, etc).
 * `SMTP_USER`: The SMTP server user to send emails.
 * `SMTP_PASSWORD`: The SMTP server password to send emails.
 * `EMAILS_FROM_EMAIL`: The email account to send emails from.
-* `POSTGRES_SERVER`: The hostname of the PostgreSQL server. You can leave the default of `db`, provided by the same Docker Compose. You normally wouldn't need to change this unless you are using a third-party provider.
-* `POSTGRES_PORT`: The port of the PostgreSQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
-* `POSTGRES_USER`: The Postgres user, you can leave the default.
-* `POSTGRES_DB`: The database name to use for this application. You can leave the default of `app`.
+* `MYSQL_SERVER`: The hostname of the MySQL server. You can leave the default of `db`, provided by the same Docker Compose. You normally wouldn't need to change this unless you are using a third-party provider.
+* `MYSQL_PORT`: The port of the MySQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
+* `MYSQL_DATABASE`: The database name to use for this application. You can leave the default of `argus`.
 * `SENTRY_DSN`: The DSN for Sentry, if you are using it.
+* `DOCKER_IMAGE_BACKEND` / `DOCKER_IMAGE_PINGSVC`: image names used to build/tag the backend and pingsvc images.
+
+See [Multi-zone configuration](#multi-zone-configuration) below for the additional `ARGUS_*`/`S3_*` variables used by an `argus-client` zone or a central `argus-server`.
 
 ## GitHub Actions Environment Variables
 
@@ -208,7 +210,38 @@ docker compose -f compose.yml up -d
 
 For production you wouldn't want to have the overrides in `compose.override.yml`, that's why we explicitly specify `compose.yml` as the file to use.
 
-## Continuous Deployment (CD)
+## Multi-zone configuration
+
+Argus can run as a single stack (the default — nothing below needs to be set), or split into independent **zones** (`argus-client`, one per building/site) pushing signed status snapshots to a central **argus-server**. See the [architecture diagram in README.md](README.md#architecture) and the fully worked local walkthrough in [development.md](development.md#running-a-full-argus-client--argus-server-locally) for how the pieces fit together — this section only covers the production-specific parts: real S3 (not the local MinIO used in development) and credential handling.
+
+### Deploying a zone (argus-client)
+
+Set on the `pingsvc` service (directly, or via secrets referenced in its `environment:` block):
+
+| Variable | Purpose |
+|---|---|
+| `ARGUS_ROLE` | `both` — runs the ping pipeline and the exporter in the same process |
+| `ARGUS_ZONE_ID`, `ARGUS_TENANT_ID` | identify this zone in the object storage key layout and on the server's dashboard |
+| `ARGUS_S3_BUCKET` | the shared bucket zones push to; leave the endpoint/access-key vars unset to use real AWS S3 with the AWS SDK's default credential chain (IAM role, instance profile) rather than static keys |
+| `ARGUS_S3_ACCESS_KEY` / `ARGUS_S3_SECRET_KEY` | only needed for a static IAM user (the plan's MVP credential model) or a non-AWS S3-compatible provider; prefer an IAM role in production if your infrastructure supports it |
+| `ARGUS_SIGNING_KEY_PATH` | must point at a path on a **persistent volume** — the exporter generates this zone's Ed25519 key once and expects to reuse it forever after. A new key on every restart breaks the server's registered-key trust model entirely. |
+
+Bucket/IAM provisioning itself (creating the bucket, the scoped `PutObject`-only policy for this zone's prefix) is an ops/Terraform task, not something the application does — see the plan doc's `plan/dynamic-hierarchy-multi-zone-architecture.md` §4.4 for the recommended IAM shape (one shared bucket, per-tenant/zone prefixes, a writer role restricted to its own prefix).
+
+### Deploying the server (argus-server)
+
+Set on the `backend` service:
+
+| Variable | Purpose |
+|---|---|
+| `S3_BUCKET` | enables the ingestion background task; unset = plain zone backend, no ingestion |
+| `S3_ACCESS_KEY` / `S3_SECRET_KEY` | a read-only credential (`GetObject`+`ListBucket`, no write) across all zones' prefixes — never reuse a zone's writer credential here |
+| `INGESTION_INTERVAL_SECONDS` | how often the server polls the bucket for new snapshots (default 60s) |
+| `STALENESS_THRESHOLD_SECONDS` | how long a zone can go without a successful pull before `GET /api/v1/zones/summary` reports it as stale (default 120s) |
+
+A server instance doesn't need `pingsvc` running at all — it only ever reads from object storage, never talks to a zone directly.
+
+To let the server verify a zone's signed snapshots (rather than leaving `signature_verified` as `null`/unknown for everything from that zone), register that zone's Ed25519 **public** key with `crud.create_zone_signing_key` — there's no HTTP route for this yet, so it's a one-off script/shell run against the server's database, matching the walkthrough in [development.md](development.md#bonus-prove-the-signature-verification-works). Never transmit or store a zone's *private* key anywhere but that zone's own persistent volume.
 
 You can use GitHub Actions to deploy your project automatically. 😎
 
@@ -292,7 +325,7 @@ You can read more about it in the official guide: [Configuring the self-hosted r
 
 On your repository, configure secrets for the environment variables you need, the same ones described above, including `SECRET_KEY`, etc. Follow the [official GitHub guide for setting repository secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#creating-secrets-for-a-repository).
 
-The current Github Actions workflows expect these secrets:
+The current GitHub Actions workflows expect these secrets:
 
 * `DOMAIN_PRODUCTION`
 * `DOMAIN_STAGING`
@@ -301,10 +334,17 @@ The current Github Actions workflows expect these secrets:
 * `EMAILS_FROM_EMAIL`
 * `FIRST_SUPERUSER`
 * `FIRST_SUPERUSER_PASSWORD`
-* `POSTGRES_PASSWORD`
+* `MYSQL_ROOT_PASSWORD`
+* `MYSQL_DATABASE`
+* `MYSQL_PORT`
 * `SECRET_KEY`
-* `LATEST_CHANGES`
-* `SMOKESHOW_AUTH_KEY`
+* `SENTRY_DSN`
+* `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
+* `DOCKER_IMAGE_BACKEND`, `DOCKER_IMAGE_PINGSVC`
+* `LATEST_CHANGES` — used by the separate `latest-changes` workflow, not deploy
+* `SMOKESHOW_AUTH_KEY` — used by the separate `smokeshow` coverage-publishing workflow, not deploy
+
+`deploy-staging.yml` and `deploy-production.yml` don't currently read any `ARGUS_*`/`S3_*` secrets — if you're deploying a zone or server that needs them, add them as additional repository secrets and reference them in those workflow files' `environment:` blocks (see [Multi-zone configuration](#multi-zone-configuration)).
 
 ## GitHub Action Deployment Workflows
 
@@ -317,28 +357,28 @@ If you need to add extra environments you could use those as a starting point.
 
 ## URLs
 
-Replace `fastapi-project.example.com` with your domain.
+Replace `argus.example.com` with your domain.
 
 ### Main Traefik Dashboard
 
-Traefik UI: `https://traefik.fastapi-project.example.com`
+Traefik UI: `https://traefik.argus.example.com`
 
 ### Production
 
-Frontend: `https://dashboard.fastapi-project.example.com`
+Frontend: `https://dashboard.argus.example.com`
 
-Backend API docs: `https://api.fastapi-project.example.com/docs`
+Backend API docs: `https://api.argus.example.com/docs`
 
-Backend API base URL: `https://api.fastapi-project.example.com`
+Backend API base URL: `https://api.argus.example.com`
 
-Adminer: `https://adminer.fastapi-project.example.com`
+Adminer: `https://adminer.argus.example.com`
 
 ### Staging
 
-Frontend: `https://dashboard.staging.fastapi-project.example.com`
+Frontend: `https://dashboard.staging.argus.example.com`
 
-Backend API docs: `https://api.staging.fastapi-project.example.com/docs`
+Backend API docs: `https://api.staging.argus.example.com/docs`
 
-Backend API base URL: `https://api.staging.fastapi-project.example.com`
+Backend API base URL: `https://api.staging.argus.example.com`
 
-Adminer: `https://adminer.staging.fastapi-project.example.com`
+Adminer: `https://adminer.staging.argus.example.com`
