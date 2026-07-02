@@ -1,12 +1,24 @@
 # Ping Service (pingsvc)
 
-Go script pinging 20k+ devices. It uses [`goroutine`](https://go.dev/tour/concurrency/1) for concurency. It also publishes state changes as events in batches and timeouts to redis pub/sub channels. 
-## 
+Go service pinging thousands of devices concurrently via ICMP. It uses
+[`goroutine`](https://go.dev/tour/concurrency/1) worker pools for
+concurrency, and publishes state changes (not every ping) as batched events
+to Redis pub/sub channels via a Lua script that atomically diffs previous
+state. See [../CLAUDE.md](../CLAUDE.md) for how this fits into the full
+ping pipeline.
 
-- Publishes ping events to Redis channel `pings:events`
-- Stores latest ping state in Redis hash `pings:state`
+- Publishes ping events to Redis channel `pings:events` (plus scoped
+  `events:room:<id>` / `events:bldg:<id>` channels)
+- Stores latest ping state in Redis hash `pings:state`, and aggregated
+  up/down counters in `stats:room:<id>` / `stats:bldg:<id>`
 - Configurable via command-line flags or environment variables
+- Exposes Prometheus metrics at `:9090/metrics`
 - Docker-ready with health checks
+
+## Requirements
+
+- Go 1.24+ (see `go.mod`)
+- A reachable Redis instance
 
 ## Configuration
 
@@ -17,11 +29,40 @@ Go script pinging 20k+ devices. It uses [`goroutine`](https://go.dev/tour/concur
 -targets // text file containing targets
 -workers // goroutine worker count. def 50
 -batch // redis batch size. def 500
--batch-flush-ms // redis batch flush in milliseconds. def 200 
+-batch-flush-ms // redis batch flush in milliseconds. def 200
+-metrics-addr // address to serve /metrics on. def :9090
 
 ```
 
 If no targets file is provided, it defaults to pinging `8.8.8.8` and `1.1.1.1`.
+
+## Development
+
+### Building locally
+
+```bash
+cd pingsvc
+go build -o pingsvc ./cmd/pingsvc
+./pingsvc -redis localhost:6379 -targets targets.txt
+```
+
+### Tests
+
+```bash
+cd pingsvc
+go vet ./...
+go test ./...
+```
+
+Test files live alongside the code in `cmd/pingsvc/` (`util_test.go`,
+`redis_test.go`).
+
+### Metrics
+
+Prometheus metrics are served at `:9090/metrics` (configurable via
+`-metrics-addr`), including counters for total/successful/failed pings,
+state changes, dropped events/jobs, Redis publish/error counts, ping RTT
+histogram, and job/result queue depth gauges.
 
 ## Usage
 
@@ -60,14 +101,6 @@ Events are published as JSON objects with the following structure:
   "ts": 1642370000000,
   "interval_ms": 1000
 }
-```
-
-### Building Locally
-
-```bash
-cd pingsvc
-go build -o pingsvc ./cmd/pingsvc
-./pingsvc -redis localhost:6379 -targets targets.txt
 ```
 
 ## Health Check

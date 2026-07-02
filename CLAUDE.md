@@ -13,7 +13,18 @@ Three services:
 
 ## Commands
 
-### Docker (recommended for full-stack)
+Setup, local dev servers, tests, lint/format, and build commands for each
+service are documented in that service's README — check there first:
+
+- [backend/README.md](backend/README.md) — uv setup, `fastapi dev`, pytest,
+  alembic migrations, mypy/ruff
+- [pingsvc/README.md](pingsvc/README.md) — Go build/run, `go test`,
+  Docker Compose usage, Prometheus metrics
+- [frontend/README.md](frontend/README.md) — npm setup, Vite dev server,
+  vitest, oxlint
+
+Full-stack quick start (see [root README](README.md) for the complete
+walkthrough):
 
 ```bash
 docker compose watch backend       # start stack with hot reload on backend
@@ -21,51 +32,10 @@ docker compose logs backend        # tail backend logs
 docker compose stop backend        # stop just the backend (run local dev server instead)
 ```
 
-### Backend local dev
-
-```bash
-cd backend
-fastapi dev app/main.py            # dev server at http://localhost:8000
-```
-
-### Backend tests
+Full backend test suite, used in the [Feature Branch Workflow](#feature-branch-workflow) below:
 
 ```bash
 ./scripts/test.sh                  # full test run inside Docker (builds, runs, tears down)
-
-# Or locally (requires DB + Redis):
-cd backend
-coverage run -m pytest tests/
-coverage report
-pytest tests/api/routes/test_login.py::test_login_access_token_correct  # single test
-```
-
-### Backend lint & format
-
-```bash
-cd backend
-bash scripts/lint.sh               # mypy + ruff check + ruff format --check
-bash scripts/format.sh             # ruff fix + ruff format (auto-fixes)
-```
-
-### pingsvc
-
-```bash
-cd pingsvc
-go build -o pingsvc ./cmd/pingsvc
-./pingsvc -redis localhost:6379 -targets targets.txt
-
-# Generate dummy targets file:
-./pingsvc/generate_targets.sh
-docker compose up pingsvc -d       # run in Docker (auto-starts redis)
-```
-
-### Database migrations
-
-```bash
-cd backend
-alembic upgrade head               # apply all pending migrations
-alembic revision --autogenerate -m "description"  # generate new migration
 ```
 
 ## Architecture
