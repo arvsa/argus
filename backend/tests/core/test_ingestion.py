@@ -1,6 +1,8 @@
 import gzip
 import hashlib
 import json
+import logging
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import pytest
@@ -11,7 +13,9 @@ from sqlmodel import Session
 from app import crud
 from app.core.ingestion import (
     StorageKeyParseError,
+    check_and_log_stale_zones,
     ingest_object,
+    is_zone_stale,
     parse_storage_key,
     run_ingestion_cycle,
     verify_manifest,
@@ -269,3 +273,48 @@ def test_run_ingestion_cycle_skips_already_ingested_objects(db: Session, s3_clie
     second = run_ingestion_cycle(session=db, s3_client=s3_client, bucket=BUCKET)
     assert first == 1
     assert second == 0
+
+
+# ── staleness ──────────────────────────────────────────────────────────────
+
+def test_is_zone_stale_true_when_past_threshold() -> None:
+    last_pulled_at = datetime.now(timezone.utc) - timedelta(seconds=300)
+    assert is_zone_stale(last_pulled_at, threshold_seconds=120) is True
+
+
+def test_is_zone_stale_false_when_within_threshold() -> None:
+    last_pulled_at = datetime.now(timezone.utc) - timedelta(seconds=10)
+    assert is_zone_stale(last_pulled_at, threshold_seconds=120) is False
+
+
+def test_check_and_log_stale_zones_logs_a_warning_per_stale_zone(
+    db: Session, caplog: pytest.LogCaptureFixture
+) -> None:
+    tenant_id = random_lower_string()
+    summary = crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-dark",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    summary.last_pulled_at = datetime.now(timezone.utc) - timedelta(seconds=500)
+    db.add(summary)
+    db.commit()
+
+    with caplog.at_level(logging.WARNING):
+        stale = check_and_log_stale_zones(session=db, threshold_seconds=120)
+
+    stale_ids = {(z.tenant_id, z.zone_id) for z in stale}
+    assert (tenant_id, "zone-dark") in stale_ids
+    assert any("zone-dark" in record.message for record in caplog.records)
+
+
+def test_check_and_log_stale_zones_excludes_fresh_zone(db: Session) -> None:
+    tenant_id = random_lower_string()
+    # Freshly upserted -- last_pulled_at is "now", must not count as stale
+    # even with a fairly tight threshold.
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-fresh-2",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    stale = check_and_log_stale_zones(session=db, threshold_seconds=120)
+    stale_ids = {(z.tenant_id, z.zone_id) for z in stale}
+    assert (tenant_id, "zone-fresh-2") not in stale_ids

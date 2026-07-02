@@ -10,6 +10,7 @@ from app.api.routes import (
     rooms,
     users,
     utils,
+    zones,
 )
 from app.core.config import settings
 
@@ -22,6 +23,7 @@ api_router.include_router(buildings.router)
 api_router.include_router(rooms.router)
 api_router.include_router(devices.router)
 api_router.include_router(pings.router)
+api_router.include_router(zones.router)
 
 if settings.ENVIRONMENT == "local":
     api_router.include_router(private.router)

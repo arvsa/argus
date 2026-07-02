@@ -1,8 +1,8 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from app.core.security import get_password_hash, verify_password
 from app.models import (
@@ -246,3 +246,16 @@ def get_zone_signing_key(
         ZoneSigningKey.tenant_id == tenant_id, ZoneSigningKey.zone_id == zone_id
     )
     return session.exec(statement).first()
+
+
+def get_stale_zones(*, session: Session, threshold_seconds: int) -> list[ZoneSummary]:
+    """Return every ZoneSummary whose last_pulled_at is older than
+    threshold_seconds -- the "zone went dark" signal from
+    plan/dynamic-hierarchy-multi-zone-architecture.md §4.5, since a zone's
+    own WAN outage means it can't self-report and the server must notice
+    the absence of new data instead. last_pulled_at is always set once a
+    ZoneSummary row exists (upsert_zone_summary always sets it), so no
+    NULL-handling branch is needed here."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
+    statement = select(ZoneSummary).where(col(ZoneSummary.last_pulled_at) < cutoff)
+    return list(session.exec(statement).all())

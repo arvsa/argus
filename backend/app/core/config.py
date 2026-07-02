@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     S3_ACCESS_KEY: str | None = None  # unset = boto3's default credential chain
     S3_SECRET_KEY: str | None = None
     INGESTION_INTERVAL_SECONDS: int = 60
+    # A zone with no successful pull in this long is considered stale (~2x
+    # a zone's expected push interval, per plan §4.5). There's no per-zone
+    # push-interval registration yet, so this is one global default rather
+    # than something derived per zone.
+    STALENESS_THRESHOLD_SECONDS: int = 120
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
