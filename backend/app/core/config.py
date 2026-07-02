@@ -101,6 +101,16 @@ class Settings(BaseSettings):
     ALLOWED_EXTENSIONS: set[str] = {".csv"}
     MAX_ROWS: int = 10_000  # optional limit to protect server; adjust as needed
 
+    # argus-server ingestion (plan/dynamic-hierarchy-multi-zone-architecture.md
+    # §4.5). S3_BUCKET unset/empty disables ingestion entirely, matching
+    # pingsvc's own opt-in pattern for its S3 push (-s3-bucket).
+    S3_BUCKET: str | None = None
+    S3_REGION: str = "us-east-1"
+    S3_ENDPOINT: str | None = None  # set for MinIO/S3-compatible endpoints
+    S3_ACCESS_KEY: str | None = None  # unset = boto3's default credential chain
+    S3_SECRET_KEY: str | None = None
+    INGESTION_INTERVAL_SECONDS: int = 60
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (
