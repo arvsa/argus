@@ -22,6 +22,12 @@ COPY --from=builder /pingsvc /usr/local/bin/pingsvc
 COPY wait-for-redis.sh /usr/local/bin/wait-for-redis.sh
 RUN chmod +x /usr/local/bin/pingsvc /usr/local/bin/wait-for-redis.sh
 
+# The exporter role (-role=exporter|both) defaults to -spool-dir
+# /var/lib/argus/pending and -signing-key-path under the same tree if set
+# relative -- pre-create it owned by appuser so it works out of the box
+# instead of failing with "permission denied" as a non-root user.
+RUN mkdir -p /var/lib/argus/pending && chown -R appuser:appgroup /var/lib/argus
+
 USER appuser
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 CMD [ "sh", "-c", "pgrep pingsvc || exit 1" ]
