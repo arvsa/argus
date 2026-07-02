@@ -275,6 +275,11 @@ class NodeTypeBase(SQLModel):
 class NodeTypeCreate(NodeTypeBase):
     parent_type_id: uuid.UUID | None = None
 
+# rank/parent_type_id are structural (they define the chain) and aren't
+# updatable via the API -- only a rename is safe post-creation.
+class NodeTypeUpdate(SQLModel):
+    name: str | None = Field(default=None, max_length=255)
+
 class NodeType(NodeTypeBase, table=True):
     __tablename__ = "node_type"
     __table_args__ = (
@@ -306,6 +311,11 @@ class NodeBase(SQLModel):
 class NodeCreate(NodeBase):
     node_type_id: uuid.UUID
     parent_id: uuid.UUID | None = None
+
+# node_type_id/parent_id are structural (they determine path_ids) and
+# aren't updatable via the API -- only a rename is safe post-creation.
+class NodeUpdate(SQLModel):
+    name: str | None = Field(default=None, max_length=255)
 
 class Node(NodeBase, table=True):
     __tablename__ = "node"
