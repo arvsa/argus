@@ -98,9 +98,6 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
 
-    ALLOWED_EXTENSIONS: set[str] = {".csv"}
-    MAX_ROWS: int = 10_000  # optional limit to protect server; adjust as needed
-
     # argus-server ingestion (plan/dynamic-hierarchy-multi-zone-architecture.md
     # §4.5). S3_BUCKET unset/empty disables ingestion entirely, matching
     # pingsvc's own opt-in pattern for its S3 push (-s3-bucket).
