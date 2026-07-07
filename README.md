@@ -2,7 +2,6 @@
 
 [![Test Backend](https://github.com/arvsa/argus/actions/workflows/test-backend.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-backend.yml)
 [![Test pingsvc](https://github.com/arvsa/argus/actions/workflows/test-pingsvc.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-pingsvc.yml)
-[![Test Frontend](https://github.com/arvsa/argus/actions/workflows/test-frontend.yml/badge.svg)](https://github.com/arvsa/argus/actions/workflows/test-frontend.yml)
 
 A network device monitoring system. It continuously pings devices, tracks up/down state in Redis, and streams live status changes to clients over WebSockets — deployable either as a single stack, or split across independent **zones** (e.g. one per building or site) that each run their own local monitoring and push aggregated, signed status snapshots to a central dashboard.
 
@@ -49,7 +48,6 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 |---|---|
 | **backend** | FastAPI REST API + WebSocket server (Python). Runs as either an `argus-client`'s local API or the central `argus-server`'s ingestion + dashboard API, depending on whether `S3_BUCKET` is configured. |
 | **pingsvc** | Concurrent ICMP ping daemon (Go). Its `-role` flag (`pingsvc` / `exporter` / `both`) determines whether it just pings, just exports/pushes snapshots, or both — `both` is what makes a deployment an `argus-client`. |
-| **frontend** | React + Vite + TypeScript dashboard |
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
 | **adminer** | Database web UI |
@@ -128,9 +126,9 @@ alembic upgrade head
 
 ## CI/CD
 
-Every push/PR runs three independent GitHub Actions workflows: **Test Backend** (pytest), **Test pingsvc** (`go vet` + `go test`), and **Test Frontend** (oxlint + `tsc` + vitest).
+Every push/PR runs two independent GitHub Actions workflows: **Test Backend** (pytest) and **Test pingsvc** (`go vet` + `go test`).
 
-Push to `main` → **Deploy to Staging** (gated on all three test workflows passing for that commit). Publish a GitHub release → **Deploy to Production**. See [deployment.md](deployment.md) for the full Traefik setup, multi-zone production configuration, and required GitHub secrets.
+Push to `main` → **Deploy to Staging** (gated on both test workflows passing for that commit). Publish a GitHub release → **Deploy to Production**. See [deployment.md](deployment.md) for the full Traefik setup, multi-zone production configuration, and required GitHub secrets.
 
 ## Connecting to Running Services
 
