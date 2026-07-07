@@ -114,53 +114,6 @@ func TestPublishAndAggregate_StateFlipPublishesAgain(t *testing.T) {
 	}
 }
 
-func TestPublishAndAggregate_RoomCountersTrackUpDown(t *testing.T) {
-	_, rdb, sha := newTestRedis(t)
-	ctx := context.Background()
-
-	roomKey := "stats:room:room-42"
-
-	// Device A comes up in room-42.
-	a := Event{Addr: "10.0.1.1", OK: true, TS: 1000, RoomID: "room-42"}
-	if _, err := publishAndAggregate(ctx, rdb, sha, a); err != nil {
-		t.Fatalf("device A publish error = %v", err)
-	}
-	// Device B comes up in room-42.
-	b := Event{Addr: "10.0.1.2", OK: true, TS: 1000, RoomID: "room-42"}
-	if _, err := publishAndAggregate(ctx, rdb, sha, b); err != nil {
-		t.Fatalf("device B publish error = %v", err)
-	}
-
-	assertHashField(t, ctx, rdb, roomKey, "up", "2")
-	// "down" is never HINCRBY'd until the first down transition occurs, so
-	// the field doesn't exist yet — it is not lazily initialized to "0".
-	assertHashFieldMissing(t, ctx, rdb, roomKey, "down")
-
-	// Device A goes down — up count must decrement, down count increments.
-	aDown := Event{Addr: "10.0.1.1", OK: false, TS: 2000, RoomID: "room-42"}
-	if _, err := publishAndAggregate(ctx, rdb, sha, aDown); err != nil {
-		t.Fatalf("device A down publish error = %v", err)
-	}
-
-	assertHashField(t, ctx, rdb, roomKey, "up", "1")
-	assertHashField(t, ctx, rdb, roomKey, "down", "1")
-}
-
-func TestPublishAndAggregate_BuildingCountersTrackUpDown(t *testing.T) {
-	_, rdb, sha := newTestRedis(t)
-	ctx := context.Background()
-
-	bldgKey := "stats:bldg:bldg-7"
-
-	ev := Event{Addr: "10.0.2.1", OK: false, TS: 1000, BldgID: "bldg-7"}
-	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
-		t.Fatalf("publish error = %v", err)
-	}
-
-	assertHashField(t, ctx, rdb, bldgKey, "down", "1")
-	assertHashFieldMissing(t, ctx, rdb, bldgKey, "up")
-}
-
 func TestPublishAndAggregate_NodeCountersTrackUpDown(t *testing.T) {
 	_, rdb, sha := newTestRedis(t)
 	ctx := context.Background()
@@ -200,26 +153,6 @@ func TestPublishAndAggregate_NodeIDsUpdatesEveryAncestorInChain(t *testing.T) {
 	}
 }
 
-func TestPublishAndAggregate_NodeIDsAndLegacyRoomBldgBothUpdate(t *testing.T) {
-	_, rdb, sha := newTestRedis(t)
-	ctx := context.Background()
-
-	// During the Phase 0 transition, an event may carry both the legacy
-	// room/bldg fields and the generalized node ancestor chain; both must
-	// be written (dual-write, plan §5 Phase 0 row).
-	ev := Event{
-		Addr: "10.0.3.3", OK: true, TS: 1000,
-		RoomID: "room-42", BldgID: "bldg-7", NodeIDs: []string{"node-9"},
-	}
-	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
-		t.Fatalf("publish error = %v", err)
-	}
-
-	assertHashField(t, ctx, rdb, "stats:room:room-42", "up", "1")
-	assertHashField(t, ctx, rdb, "stats:bldg:bldg-7", "up", "1")
-	assertHashField(t, ctx, rdb, "stats:node:node-9", "up", "1")
-}
-
 func TestPublishAndAggregate_EmptyNodeIDsDoesNotWriteAnyNodeCounters(t *testing.T) {
 	_, rdb, sha := newTestRedis(t)
 	ctx := context.Background()
@@ -239,13 +172,13 @@ func TestPublishAndAggregate_EmptyNodeIDsDoesNotWriteAnyNodeCounters(t *testing.
 }
 
 // NOTE: publishIfChangedAndAggregateScript also PUBLISHes to pings:events /
-// events:room:<id> / events:bldg:<id> depending on which IDs are set on the
-// event. That channel-routing behavior is intentionally NOT covered here:
-// miniredis's Lua interpreter executes `redis.call("PUBLISH", ...)` and
-// returns success, but does not relay the message to its own pubsub
-// dispatcher, so a go-redis Subscribe()'d client never observes it (verified
-// directly: a Lua-issued PUBLISH against miniredis is silently dropped while
-// a client-issued rdb.Publish() to the same channel is delivered normally).
+// events:node:<id> depending on which IDs are set on the event. That
+// channel-routing behavior is intentionally NOT covered here: miniredis's
+// Lua interpreter executes `redis.call("PUBLISH", ...)` and returns success,
+// but does not relay the message to its own pubsub dispatcher, so a
+// go-redis Subscribe()'d client never observes it (verified directly: a
+// Lua-issued PUBLISH against miniredis is silently dropped while a
+// client-issued rdb.Publish() to the same channel is delivered normally).
 // This is a miniredis test-double limitation, not a pingsvc bug — exercising
 // the real channel routing requires an integration test against a real Redis
 // (see docker compose's `redis` service / compose.yml).

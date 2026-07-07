@@ -28,10 +28,6 @@ type Event struct {
 	Err      string  `json:"err,omitempty"`
 	TS       int64   `json:"ts"`
 	Interval int64   `json:"interval_ms"`
-	// Legacy two-level aggregation fields, kept for the Phase 0 dual-write
-	// transition (plan/dynamic-hierarchy-multi-zone-architecture.md §4.2).
-	RoomID string `json:"room,omitempty"`
-	BldgID string `json:"bldg,omitempty"`
 	// NodeIDs is the device's full ancestor chain in the generalized
 	// Node/NodeType hierarchy (any depth). Every id gets its own
 	// stats:node:<id> / events:node:<id> fan-out.
@@ -41,31 +37,24 @@ type Event struct {
 func nowMs() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 
 // Lua script: atomically compare previous device state, update state, update
-// per-node/room/bldg counters, HSET snapshot, and PUBLISH only when the state
-// changed.
+// per-node counters, HSET snapshot, and PUBLISH only when the state changed.
 // KEYS[1] = addr
 // ARGV[1] = newState ("1" or "0")
 // ARGV[2] = jsonPayload
-// ARGV[3] = roomID (legacy, optional, may be empty)
-// ARGV[4] = bldgID (legacy, optional, may be empty)
-// ARGV[5] = timestamp ms (for ZADD pings:index)
-// ARGV[6] = nodeIDs, comma-separated ancestor chain (optional, may be empty)
+// ARGV[3] = timestamp ms (for ZADD pings:index)
+// ARGV[4] = nodeIDs, comma-separated ancestor chain (optional, may be empty)
 //
-// nodeIDs generalizes roomID/bldgID to an arbitrary-depth ancestor chain
+// nodeIDs is an arbitrary-depth ancestor chain
 // (plan/dynamic-hierarchy-multi-zone-architecture.md §4.2): every id in the
 // chain gets its own stats:node:<id> counter and events:node:<id> publish.
-// roomID/bldgID are kept as a Phase 0 dual-write for backward compatibility
-// and are independent of nodeIDs — an event may carry either, both, or
-// neither. If none of the three produced a publish, the event falls back to
-// the generic pings:events channel exactly as before this generalization.
+// If that produced no publish (empty nodeIDs), the event falls back to the
+// generic pings:events channel.
 const publishIfChangedAndAggregateScript = `
 local addr = KEYS[1]
 local newState = ARGV[1]
 local payload = ARGV[2]
-local roomID = ARGV[3]
-local bldgID = ARGV[4]
-local ts = tonumber(ARGV[5])
-local nodeIDsCSV = ARGV[6]
+local ts = tonumber(ARGV[3])
+local nodeIDsCSV = ARGV[4]
 
 local key = "state:device:" .. addr
 local oldState = redis.call("GET", key)
@@ -103,19 +92,6 @@ for nodeID in string.gmatch(nodeIDsCSV, "[^,]+") do
     published = true
 end
 
--- legacy room/bldg aggregation (Phase 0 dual-write, see comment above)
-if roomID ~= "" then
-    bumpCounter("stats:room:" .. roomID)
-    redis.call("PUBLISH", "events:room:" .. roomID, payload)
-    published = true
-end
-
-if bldgID ~= "" then
-    bumpCounter("stats:bldg:" .. bldgID)
-    redis.call("PUBLISH", "events:bldg:" .. bldgID, payload)
-    published = true
-end
-
 if not published then
     redis.call("PUBLISH", "pings:events", payload)
 end
@@ -145,8 +121,7 @@ func evalArgs(ev Event) (addr string, argv []any) {
 	raw, _ := json.Marshal(ev)
 	nodeIDsCSV := strings.Join(ev.NodeIDs, ",")
 	return ev.Addr, []any{
-		newState, string(raw), ev.RoomID, ev.BldgID,
-		strconv.FormatInt(ev.TS, 10), nodeIDsCSV,
+		newState, string(raw), strconv.FormatInt(ev.TS, 10), nodeIDsCSV,
 	}
 }
 
