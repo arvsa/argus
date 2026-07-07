@@ -34,6 +34,16 @@ def test_get_users_normal_user_me(
     assert current_user["email"] == settings.EMAIL_TEST_USER
 
 
+def test_get_users_me_includes_admission_status(
+    client: TestClient, normal_user_token_headers: dict[str, str]
+) -> None:
+    r = client.get(f"{settings.API_V1_STR}/users/me", headers=normal_user_token_headers)
+    current_user = r.json()
+    # New users default to "pending" (app.models.User.admission_status) --
+    # a frontend needs this field to build a pending-approval admin screen.
+    assert current_user["admission_status"] == "pending"
+
+
 def test_create_user_new_email(
     client: TestClient, superuser_token_headers: dict[str, str], db: Session
 ) -> None:
