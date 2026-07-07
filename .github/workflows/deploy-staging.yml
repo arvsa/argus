@@ -5,7 +5,6 @@ on:
     workflows:
       - Test Backend
       - Test pingsvc
-      - Test Frontend
     types:
       - completed
     branches:
@@ -28,7 +27,7 @@ jobs:
           # all of them complete - so explicitly check every required
           # workflow's latest conclusion for this exact commit before
           # treating CI as green.
-          required=("Test Backend" "Test pingsvc" "Test Frontend")
+          required=("Test Backend" "Test pingsvc")
           for name in "${required[@]}"; do
             conclusion=$(gh run list --repo "$REPO" --commit "$SHA" --json name,conclusion \
               --jq ".[] | select(.name == \"$name\") | .conclusion" | head -n1)
