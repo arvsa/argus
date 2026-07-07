@@ -8,9 +8,9 @@ state. See [../CLAUDE.md](../CLAUDE.md) for how this fits into the full
 ping pipeline.
 
 - Publishes ping events to Redis channel `pings:events` (plus scoped
-  `events:room:<id>` / `events:bldg:<id>` channels)
+  `events:node:<id>` channels)
 - Stores latest ping state in Redis hash `pings:state`, and aggregated
-  up/down counters in `stats:room:<id>` / `stats:bldg:<id>`
+  up/down counters in `stats:node:<id>`
 - Configurable via command-line flags or environment variables
 - Exposes Prometheus metrics at `:9090/metrics`
 - Docker-ready with health checks

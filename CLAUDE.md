@@ -6,11 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A network device monitoring system. It pings thousands of devices, tracks their up/down state in Redis, and streams live status updates to clients over WebSockets. Deployable as a single stack, or split across independent **zones** (e.g. one per building/site) that each run their own local monitoring and push signed, aggregated snapshots to a central `argus-server` dashboard. See [plan/dynamic-hierarchy-multi-zone-architecture.md](plan/dynamic-hierarchy-multi-zone-architecture.md) and its [implementation summary](plan/dynamic-hierarchy-multi-zone-implementation-summary.md) for the design and what's shipped.
 
-There is currently no frontend — the previous React dashboard was built entirely on the retired fixed hierarchy (see Data model below) and was deleted rather than half-migrated. A new one will be built against the `Node`/`NodeType` API when that work starts.
-
 Services:
 - **`backend/`** — FastAPI (Python) REST API + WebSocket server, MySQL DB via SQLModel/Alembic. Doubles as either a zone's local API or the central `argus-server` ingestion/dashboard API depending on whether `S3_BUCKET` is configured.
 - **`pingsvc/`** — Go service that concurrently ICMPs devices and publishes state changes to Redis. `-role` (`pingsvc` / `exporter` / `both`) controls whether it pings, exports signed snapshots to object storage, or both (`both` = a full `argus-client`).
+- **`frontend/`** — React + Vite + TypeScript dashboard
 - **`redis`** — Shared message bus between pingsvc and backend, local to each zone
 
 ## Commands
@@ -70,6 +69,20 @@ ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_
 
 `ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
 
+### Multi-zone export/ingestion pipeline
+
+```
+pingsvc -role=both (argus-client)
+     ↓ every N seconds: gzip snapshot of stats:node:*/pings:state
+Local spool dir → Ed25519-signed manifest → push to S3-compatible object storage
+     ↓ key layout: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<ts>.json.gz(+.manifest.json)
+argus-server backend ingestion_task (startup lifespan, polls the bucket)
+     ↓ verifies signature against the *registered* ZoneSigningKey (never the manifest's embedded key)
+ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_stale)
+```
+
+`ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
+
 ### Data model
 
 ```
@@ -77,7 +90,7 @@ NodeType → Node
 ```
 Admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart) — this replaced an earlier fixed `Campus → Building → Room → Device` chain, which has been fully retired (tables dropped, routes and tests removed). All relationships use `ondelete="CASCADE"`. All PKs are UUIDs generated server-side.
 
-The single `models.py` file contains both SQLModel DB tables and all Pydantic request/response schemas (pattern: `XxxBase`, `XxxCreate`, `XxxUpdate`, `XxxPublic`, `XxxsPublic`, `Xxx` table).
+The single `models.py` file contains both SQLModel DB tables and all Pydantic request/response schemas (pattern: `XxxBase`, `XxxCreate`, `XxxUpdate`, `XxxPublic`, `XxxsPublic`, `Xxx` table). This includes the legacy `Campus`/`Building`/`Room`/`Device` chain, the generalized `NodeType`/`Node` hierarchy (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart), and the multi-zone tables `ClientSnapshot`/`ZoneSummary`/`ZoneSigningKey`.
 
 ### Auth
 
