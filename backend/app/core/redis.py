@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import redis
 import redis.asyncio as aioredis
@@ -53,13 +54,20 @@ class RedisManager:
 
 async def redis_listener_task(stop_event: asyncio.Event):
     """
-    Background task: subscribe to CHANNEL and forward messages to connected websockets.
-    Stops when stop_event is set.
-    Uses the async Redis client.
+    Background task: subscribe to CHANNEL plus every per-node events:node:*
+    channel (pattern subscribe -- pingsvc's Lua script publishes there for
+    any ping target wired into the hierarchy, not just the fixed CHANNEL),
+    and forward messages to connected websockets. Stops when stop_event is
+    set. Uses the async Redis client.
+
+    Each forwarded message is enveloped as {"channel": ..., "data": ...}
+    since the node id lives only in the channel name, not the payload body
+    (see plan/frontend-v2.md Phase 0b).
     """
     redis_client = get_async_redis_client()
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(settings.REDIS_CHANNEL)
+    await pubsub.psubscribe("events:node:*")
 
     try:
         while not stop_event.is_set():
@@ -70,14 +78,17 @@ async def redis_listener_task(stop_event: asyncio.Event):
             data = item.get("data")
             if data is None:
                 continue
+            channel = item.get("channel")
+            envelope = json.dumps({"channel": channel, "data": data})
             # broadcast the message to websockets (your existing broadcaster)
             from app.core.broadcast import (
                 broadcaster as b,  # import here to avoid cycle
             )
-            await b.broadcast(data)
+            await b.broadcast(envelope)
     finally:
         try:
             await pubsub.unsubscribe(settings.REDIS_CHANNEL)
+            await pubsub.punsubscribe("events:node:*")
             await pubsub.close()
         except Exception:
             pass
