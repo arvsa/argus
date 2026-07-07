@@ -21,16 +21,28 @@ router = APIRouter(prefix="/node-types", tags=["node-types"])
 
 @router.get("/", response_model=NodeTypesPublic)
 def read_node_types(
-    session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+    tenant_id: str | None = None,
 ) -> Any:
     """
     Retrieve NodeTypes (the per-tenant hierarchy shape, see
     plan/dynamic-hierarchy-multi-zone-architecture.md §4.1).
+
+    tenant_id: filter to a single tenant's rank chain -- omitting it
+    applies no filter, for backward compatibility with existing callers.
     """
     count_statement = select(func.count()).select_from(NodeType)
+    statement = select(NodeType)
+
+    if tenant_id is not None:
+        count_statement = count_statement.where(NodeType.tenant_id == tenant_id)
+        statement = statement.where(NodeType.tenant_id == tenant_id)
+
     count = session.exec(count_statement).one()
-    statement = select(NodeType).offset(skip).limit(limit)
-    node_types = session.exec(statement).all()
+    node_types = session.exec(statement.offset(skip).limit(limit)).all()
     return NodeTypesPublic(data=node_types, count=count)
 
 
