@@ -21,8 +21,6 @@ service are documented in that service's README — check there first:
   alembic migrations, mypy/ruff
 - [pingsvc/README.md](pingsvc/README.md) — Go build/run, `go test`,
   Docker Compose usage, Prometheus metrics
-- [frontend/README.md](frontend/README.md) — npm setup, Vite dev server,
-  vitest, oxlint
 
 Full-stack quick start (see [root README](README.md) for the complete
 walkthrough):
@@ -46,16 +44,30 @@ Full backend test suite, used in the [Feature Branch Workflow](#feature-branch-w
 ```
 pingsvc (Go) → ICMP → devices
      ↓ state change only (Lua script, atomic)
-Redis PUBLISH pings:events / events:room:<id> / events:bldg:<id>
+Redis PUBLISH pings:events / events:node:<id>
      ↓
 FastAPI redis_listener_task (startup lifespan)
      ↓
 Broadcaster → WebSocket clients at /ws/pings
 ```
 
-The Go `pingsvc` uses a Lua script (`publishIfChangedAndAggregateScript`) to atomically compare previous device state before publishing — only state *changes* are published. It maintains aggregated up/down counters both under the legacy `stats:room:<id>`/`stats:bldg:<id>` keys and the generalized `stats:node:<id>` keys (dual-write, for the `Node`/`NodeType` hierarchy below), and snapshots every device's last known state in `pings:state`.
+The Go `pingsvc` uses a Lua script (`publishIfChangedAndAggregateScript`) to atomically compare previous device state before publishing — only state *changes* are published. It maintains aggregated up/down counters per ancestor node in a Redis hash (`stats:node:<id>`, one per node in the device's ancestor chain), and snapshots every device's last known state in `pings:state`.
 
-The FastAPI backend holds both a sync and async Redis client. The async client powers the pub/sub listener task; the sync client is used in regular route handlers (e.g., `/state`, `/state_scan`, device creation cache writes).
+The FastAPI backend holds both a sync and async Redis client. The async client powers the pub/sub listener task; the sync client is used in regular route handlers (e.g., `/state`, `/state_scan`).
+
+### Multi-zone export/ingestion pipeline
+
+```
+pingsvc -role=both (argus-client)
+     ↓ every N seconds: gzip snapshot of stats:node:*/pings:state
+Local spool dir → Ed25519-signed manifest → push to S3-compatible object storage
+     ↓ key layout: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<ts>.json.gz(+.manifest.json)
+argus-server backend ingestion_task (startup lifespan, polls the bucket)
+     ↓ verifies signature against the *registered* ZoneSigningKey (never the manifest's embedded key)
+ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_stale)
+```
+
+`ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
 
 ### Multi-zone export/ingestion pipeline
 
@@ -74,16 +86,15 @@ ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_
 ### Data model
 
 ```
-Campus → Building → Room → Device   (fixed, legacy — still fully supported)
-NodeType → Node                     (admin-configurable, arbitrary depth, per-tenant)
+NodeType → Node
 ```
-All relationships use `ondelete="CASCADE"`. `Device.room_id` is nullable (devices can be unassigned). All PKs are UUIDs generated server-side.
+Admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart) — this replaced an earlier fixed `Campus → Building → Room → Device` chain, which has been fully retired (tables dropped, routes and tests removed). All relationships use `ondelete="CASCADE"`. All PKs are UUIDs generated server-side.
 
 The single `models.py` file contains both SQLModel DB tables and all Pydantic request/response schemas (pattern: `XxxBase`, `XxxCreate`, `XxxUpdate`, `XxxPublic`, `XxxsPublic`, `Xxx` table). This includes the legacy `Campus`/`Building`/`Room`/`Device` chain, the generalized `NodeType`/`Node` hierarchy (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart), and the multi-zone tables `ClientSnapshot`/`ZoneSummary`/`ZoneSigningKey`.
 
 ### Auth
 
-JWT-based. `deps.py` provides `CurrentUser` (any authenticated user) and `get_current_active_superuser`. Most write operations (`POST`/`PUT`/`DELETE` on devices, buildings, etc.) require `is_superuser=True`. Users have an `admission_status` field (`pending`/`approved`/`rejected`).
+JWT-based. `deps.py` provides `CurrentUser` (any authenticated user) and `get_current_active_superuser`. Most write operations (`POST`/`PUT`/`DELETE`) require `is_superuser=True`. Users have an `admission_status` field (`pending`/`approved`/`rejected`).
 
 ### API structure
 
@@ -98,7 +109,7 @@ MySQL (not PostgreSQL — the project was migrated). Driver: `mysql+pymysql`. Co
 - Worker pool (default 50 goroutines) reads from a `jobs` channel; a ticker enqueues all targets every interval
 - Results go to a `results` channel, flushed to Redis in batches via pipelined `EVALSHA`
 - Exposes Prometheus metrics at `:9090/metrics`
-- Targets loaded from a newline-delimited file (`-targets` flag); defaults to `8.8.8.8`, `1.1.1.1`. Lines may append `;ancestor1;ancestor2;...` node IDs for the generalized hierarchy; bare IPs stay backward compatible.
+- Targets loaded from a newline-delimited file (`-targets` flag); defaults to `8.8.8.8`, `1.1.1.1`. Lines may append `;ancestor1;ancestor2;...` node IDs for the hierarchy; bare IPs stay backward compatible.
 - `Role` (`role.go`) gates which subsystems run in this process: `RunsPingPipeline()` for the worker pool above, `RunsExporter()` for the independent snapshot/export goroutine (`exporter.go`) described in the multi-zone pipeline above
 
 

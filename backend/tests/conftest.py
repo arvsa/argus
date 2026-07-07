@@ -8,13 +8,9 @@ from app.core.config import settings
 from app.core.db import engine, init_db
 from app.main import app
 from app.models import (
-    Building,
-    Campus,
     ClientSnapshot,
-    Device,
     Node,
     NodeType,
-    Room,
     User,
     ZoneSigningKey,
     ZoneSummary,
@@ -28,17 +24,12 @@ def db() -> Generator[Session, None, None]:
     with Session(engine) as session:
         init_db(session)
         yield session
-        # Delete child-most tables first so FK constraints never block cleanup,
-        # even if a test created rows outside the normal Campus->Building->Room->Device
-        # cascade chain (e.g. an orphaned Device with room_id=None).
+        # Delete child-most tables first so FK constraints never block cleanup
+        # (Node before NodeType, since node.node_type_id has no ondelete).
         for model in (
             ClientSnapshot,
             ZoneSummary,
             ZoneSigningKey,
-            Device,
-            Room,
-            Building,
-            Campus,
             Node,
             NodeType,
             User,

@@ -45,16 +45,6 @@ go build -o pingsvc ./cmd/pingsvc
 
 To run it as a full `argus-client` (ping pipeline + exporter) instead of ping-only, add `-role=both` plus the export/S3 flags — see the walkthrough below for the exact flags and what each one does.
 
-### Running the frontend locally
-
-```bash
-cd frontend
-npm install
-npm run dev      # dev server at :5173, proxies API calls to the backend
-```
-
-> **Known issue:** `frontend/Dockerfile` does not exist yet, even though `compose.override.yml` references one. `docker compose build` for the full stack will fail until it's added — run the frontend with `npm run dev` locally instead, or build/run `db`, `redis`, `prestart`, and `backend` individually (see [scripts/test.sh](scripts/test.sh) for the exact commands CI uses).
-
 ### Lint and format (backend)
 
 ```bash
@@ -80,15 +70,6 @@ pytest tests/api/routes/test_login.py::test_login_access_token_correct   # singl
 ```bash
 cd pingsvc
 go vet ./... && go test ./...
-```
-
-**frontend**:
-
-```bash
-cd frontend
-npm run test    # vitest
-npm run lint    # oxlint
-npm run build   # tsc -b && vite build
 ```
 
 ---
@@ -289,13 +270,12 @@ By default the stack uses `localhost` with a different port per service. To test
 DOMAIN=localhost.tiangolo.com
 ```
 
-`localhost.tiangolo.com` (and all its subdomains) is a public DNS entry that resolves to `127.0.0.1`, so `api.localhost.tiangolo.com` and `dashboard.localhost.tiangolo.com` work locally once you restart the stack. See [deployment.md](deployment.md) for how the same Traefik setup works in production.
+`localhost.tiangolo.com` (and all its subdomains) is a public DNS entry that resolves to `127.0.0.1`, so `api.localhost.tiangolo.com` works locally once you restart the stack. See [deployment.md](deployment.md) for how the same Traefik setup works in production.
 
 ### Development URLs
 
 | Service | `localhost` | `localhost.tiangolo.com` |
 |---|---|---|
-| Frontend | http://localhost:5173 | http://dashboard.localhost.tiangolo.com |
 | Backend | http://localhost:8000 | http://api.localhost.tiangolo.com |
 | Swagger UI | http://localhost:8000/docs | http://api.localhost.tiangolo.com/docs |
 | ReDoc | http://localhost:8000/redoc | http://api.localhost.tiangolo.com/redoc |

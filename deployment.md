@@ -12,7 +12,7 @@ But you have to configure a couple things first.
 
 * Have a remote server ready and available.
 * Configure the DNS records of your domain to point to the IP of the server you just created.
-* Configure a wildcard subdomain for your domain, so that you can have multiple subdomains for different services, e.g. `*.argus.example.com`. This will be useful for accessing different components, like `dashboard.argus.example.com`, `api.argus.example.com`, `traefik.argus.example.com`, `adminer.argus.example.com`, etc. And also for `staging`, like `dashboard.staging.argus.example.com`, `adminer.staging.argus.example.com`, etc.
+* Configure a wildcard subdomain for your domain, so that you can have multiple subdomains for different services, e.g. `*.argus.example.com`. This will be useful for accessing different components, like `api.argus.example.com`, `traefik.argus.example.com`, `adminer.argus.example.com`, etc. And also for `staging`, like `api.staging.argus.example.com`, `adminer.staging.argus.example.com`, etc.
 * Install and configure [Docker](https://docs.docker.com/engine/install/) on the remote server (Docker Engine, not Docker Desktop).
 
 ## Public Traefik
@@ -365,8 +365,6 @@ Traefik UI: `https://traefik.argus.example.com`
 
 ### Production
 
-Frontend: `https://dashboard.argus.example.com`
-
 Backend API docs: `https://api.argus.example.com/docs`
 
 Backend API base URL: `https://api.argus.example.com`
@@ -374,8 +372,6 @@ Backend API base URL: `https://api.argus.example.com`
 Adminer: `https://adminer.argus.example.com`
 
 ### Staging
-
-Frontend: `https://dashboard.staging.argus.example.com`
 
 Backend API docs: `https://api.staging.argus.example.com/docs`
 
