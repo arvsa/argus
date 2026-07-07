@@ -117,6 +117,82 @@ def test_list_nodes(client: TestClient) -> None:
     assert body["count"] >= 1
 
 
+def test_list_nodes_filters_by_parent_id(client: TestClient) -> None:
+    """GET /nodes/?parent_id=<uuid> must return only that node's direct
+    children -- without this, a tree UI has to fetch the entire table to
+    find a node's children (see plan/frontend-v2.md Phase 0c)."""
+    tenant_id = random_lower_string()
+    headers = _su(client)
+    root_type = _root_type(client, headers, tenant_id)
+    child_type = _child_type(client, headers, tenant_id, root_type["id"])
+    root = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Main Campus", "node_type_id": root_type["id"]},
+    ).json()
+    other_root = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Other Campus", "node_type_id": root_type["id"]},
+    ).json()
+    child = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Building A", "node_type_id": child_type["id"], "parent_id": root["id"]},
+    ).json()
+
+    r = client.get(f"{API}/nodes/?parent_id={root['id']}", headers=headers)
+    assert r.status_code == 200, r.text
+    ids = [n["id"] for n in r.json()["data"]]
+    assert ids == [child["id"]]
+    assert other_root["id"] not in ids
+
+
+def test_list_nodes_filters_by_parent_id_null_returns_root_nodes(client: TestClient) -> None:
+    """GET /nodes/?parent_id=null must return only root nodes (parent_id
+    IS NULL) -- distinct from omitting the filter entirely."""
+    tenant_id = random_lower_string()
+    headers = _su(client)
+    root_type = _root_type(client, headers, tenant_id)
+    child_type = _child_type(client, headers, tenant_id, root_type["id"])
+    root = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Main Campus", "node_type_id": root_type["id"]},
+    ).json()
+    child = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Building A", "node_type_id": child_type["id"], "parent_id": root["id"]},
+    ).json()
+
+    r = client.get(f"{API}/nodes/?parent_id=null&limit=1000", headers=headers)
+    assert r.status_code == 200, r.text
+    ids = [n["id"] for n in r.json()["data"]]
+    assert root["id"] in ids
+    assert child["id"] not in ids
+    assert all(n["parent_id"] is None for n in r.json()["data"])
+
+
+def test_list_nodes_filters_by_tenant_id(client: TestClient) -> None:
+    """GET /nodes/?tenant_id=<str> must join through NodeType, since
+    tenant_id isn't a column on Node itself."""
+    tenant_a = random_lower_string()
+    tenant_b = random_lower_string()
+    headers = _su(client)
+    type_a = _root_type(client, headers, tenant_a)
+    type_b = _root_type(client, headers, tenant_b)
+    node_a = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Tenant A Root", "node_type_id": type_a["id"]},
+    ).json()
+    node_b = client.post(
+        f"{API}/nodes/", headers=headers,
+        json={"name": "Tenant B Root", "node_type_id": type_b["id"]},
+    ).json()
+
+    r = client.get(f"{API}/nodes/?tenant_id={tenant_a}", headers=headers)
+    assert r.status_code == 200, r.text
+    ids = [n["id"] for n in r.json()["data"]]
+    assert node_a["id"] in ids
+    assert node_b["id"] not in ids
+
+
 def test_update_node_name(client: TestClient) -> None:
     tenant_id = random_lower_string()
     headers = _su(client)

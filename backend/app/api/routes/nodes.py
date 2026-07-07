@@ -2,27 +2,70 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from sqlmodel import func, select
+from sqlmodel import col, func, select
 
 from app import crud
 from app.api.deps import CurrentUser, SessionDep
-from app.models import Message, Node, NodeCreate, NodePublic, NodesPublic, NodeUpdate
+from app.models import (
+    Message,
+    Node,
+    NodeCreate,
+    NodePublic,
+    NodesPublic,
+    NodeType,
+    NodeUpdate,
+)
 
 router = APIRouter(prefix="/nodes", tags=["nodes"])
 
 
 @router.get("/", response_model=NodesPublic)
 def read_nodes(
-    session: SessionDep, current_user: CurrentUser, skip: int = 0, limit: int = 100
+    session: SessionDep,
+    current_user: CurrentUser,
+    skip: int = 0,
+    limit: int = 100,
+    parent_id: str | None = None,
+    tenant_id: str | None = None,
 ) -> Any:
     """
     Retrieve Nodes (instances of the dynamic hierarchy, see
     plan/dynamic-hierarchy-multi-zone-architecture.md §4.1).
+
+    parent_id: filter to direct children of a given Node id. Pass the
+    literal string "null" to fetch root nodes (parent_id IS NULL) --
+    omitting the parameter entirely applies no filter, for backward
+    compatibility with existing callers.
+    tenant_id: filter to a single tenant's Nodes (joins through NodeType,
+    since tenant_id isn't a column on Node itself).
     """
     count_statement = select(func.count()).select_from(Node)
+    statement = select(Node)
+
+    if tenant_id is not None:
+        count_statement = count_statement.join(
+            NodeType, col(Node.node_type_id) == col(NodeType.id)
+        ).where(NodeType.tenant_id == tenant_id)
+        statement = statement.join(
+            NodeType, col(Node.node_type_id) == col(NodeType.id)
+        ).where(NodeType.tenant_id == tenant_id)
+
+    if parent_id is not None:
+        if parent_id == "null":
+            count_statement = count_statement.where(Node.parent_id.is_(None))  # type: ignore[union-attr]
+            statement = statement.where(Node.parent_id.is_(None))  # type: ignore[union-attr]
+        else:
+            try:
+                parent_uuid = uuid.UUID(parent_id)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400, detail="parent_id must be a UUID or the literal string 'null'"
+                ) from e
+            count_statement = count_statement.where(Node.parent_id == parent_uuid)
+            statement = statement.where(Node.parent_id == parent_uuid)
+
     count = session.exec(count_statement).one()
-    statement = select(Node).offset(skip).limit(limit)
-    nodes = session.exec(statement).all()
+    nodes = session.exec(statement.offset(skip).limit(limit)).all()
     return NodesPublic(data=nodes, count=count)
 
 
