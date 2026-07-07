@@ -5,8 +5,10 @@ Requires a live Redis (runs inside Docker via `docker compose exec backend pytes
 /state and /state_scan require a superuser token in this backend version.
 All tests seed and clean up their own Redis keys.
 """
+import concurrent.futures
 import json
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
@@ -91,6 +93,41 @@ def test_websocket_accepts_connection(client: TestClient) -> None:
         # The server waits for client messages; send a keepalive and verify no crash.
         ws.send_text("ping")
     # If we reach here the connection opened and closed cleanly.
+
+
+def test_websocket_receives_enveloped_node_event(client: TestClient) -> None:
+    """A message published to events:node:<id> (what pingsvc's Lua script
+    actually publishes for any ping target wired into the hierarchy) must
+    reach a connected /ws/pings client, wrapped as
+    {"channel": "events:node:<id>", "data": <payload>} -- not silently
+    dropped because the listener only subscribed to the fixed pings:events
+    channel (see plan/frontend-v2.md Phase 0b).
+
+    Starlette's WebSocketTestSession.receive() has no built-in timeout, so
+    a regression here would hang forever rather than fail -- the receive
+    is done on a background thread with an explicit timeout instead.
+    """
+    rc = RedisManager.get_sync_client()
+    channel = "events:node:test-node-phase0b"
+    payload = json.dumps({"addr": "192.0.2.211", "ok": True, "ts": _TS})
+
+    with client.websocket_connect(f"{settings.API_V1_STR}/ws/pings") as ws:
+        rc.publish(channel, payload)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(ws.receive_json)
+        try:
+            received = future.result(timeout=5)
+        except concurrent.futures.TimeoutError:
+            pytest.fail(
+                f"no message received on /ws/pings within 5s after publishing "
+                f"to {channel!r} -- listener isn't forwarding per-node events"
+            )
+        finally:
+            executor.shutdown(wait=False)
+
+    assert received["channel"] == channel
+    assert json.loads(received["data"]) == json.loads(payload)
 
 
 def test_no_token_returns_401_or_403(client: TestClient) -> None:

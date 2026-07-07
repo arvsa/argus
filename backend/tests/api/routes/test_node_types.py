@@ -88,6 +88,29 @@ def test_list_node_types(client: TestClient) -> None:
     assert body["count"] >= 1
 
 
+def test_list_node_types_filters_by_tenant_id(client: TestClient) -> None:
+    """GET /node-types/?tenant_id=<str> must return only that tenant's
+    rank chain -- without this, a multi-tenant deployment can't ask for
+    just one tenant's hierarchy shape (see plan/frontend-v2.md Phase 0c)."""
+    tenant_a = random_lower_string()
+    tenant_b = random_lower_string()
+    headers = _su(client)
+    type_a = client.post(
+        f"{API}/node-types/", headers=headers,
+        json={"tenant_id": tenant_a, "name": "Campus", "rank": 0},
+    ).json()
+    type_b = client.post(
+        f"{API}/node-types/", headers=headers,
+        json={"tenant_id": tenant_b, "name": "Region", "rank": 0},
+    ).json()
+
+    r = client.get(f"{API}/node-types/?tenant_id={tenant_a}", headers=headers)
+    assert r.status_code == 200, r.text
+    ids = [nt["id"] for nt in r.json()["data"]]
+    assert type_a["id"] in ids
+    assert type_b["id"] not in ids
+
+
 def test_update_node_type_name(client: TestClient) -> None:
     tenant_id = random_lower_string()
     headers = _su(client)
