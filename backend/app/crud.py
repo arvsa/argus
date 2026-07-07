@@ -8,8 +8,6 @@ from app.core.security import get_password_hash, verify_password
 from app.models import (
     ClientSnapshot,
     ClientSnapshotCreate,
-    Device,
-    DeviceCreate,
     Item,
     ItemCreate,
     Node,
@@ -84,15 +82,6 @@ def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -
     session.commit()
     session.refresh(db_item)
     return db_item
-
-def create_devices(*, session: Session, devices: list[Device]) -> list[Device]:
-    db_devices = [Device.model_validate(device) for device in devices]
-    session.add_all(db_devices)
-    session.commit()
-    for device in db_devices:
-        session.refresh(device)
-    return db_devices
-
 
 def create_node_type(
     *, session: Session, node_type_create: NodeTypeCreate
