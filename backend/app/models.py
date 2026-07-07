@@ -62,6 +62,7 @@ class UserPublic(UserBase):
     id: uuid.UUID
     created_at: datetime | None = None
     email: str  # override: don't re-validate stored addresses on read
+    admission_status: str = "pending"
 
 
 class UsersPublic(SQLModel):
