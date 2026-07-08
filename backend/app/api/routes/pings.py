@@ -27,6 +27,24 @@ def _count_stats(redis) -> dict:
             break
     return {"total": total, "up": up, "down": down}
 
+
+def _node_stats(redis, ids: list[str]) -> dict[str, dict[str, int]]:
+    """Fetch pingsvc's per-node aggregate up/down counters (stats:node:<id>,
+    HINCRBY'd by publishIfChangedAndAggregateScript -- see
+    pingsvc/cmd/pingsvc/main.go). A node with no ping traffic yet has no
+    hash at all, so missing fields default to 0 rather than being omitted,
+    letting the frontend treat every requested id uniformly."""
+    if not ids:
+        return {}
+    pipe = redis.pipeline()
+    for node_id in ids:
+        pipe.hmget(f"stats:node:{node_id}", "up", "down")
+    results = pipe.execute()
+    return {
+        node_id: {"up": int(up or 0), "down": int(down or 0)}
+        for node_id, (up, down) in zip(ids, results)
+    }
+
 router = APIRouter(prefix="", tags=["ping"])  # prefix kept empty so paths are /ws/pings and /api/v1/state
 
 
@@ -50,6 +68,17 @@ def get_stats():
     """Aggregate up/down counts across all devices in Redis."""
     redis = get_sync_redis_client()
     return JSONResponse(_count_stats(redis))
+
+
+@router.get("/node-stats")
+def get_node_stats(current_user: CurrentUser, ids: str = Query("")):
+    """Aggregate up/down counts per Node (see plan/frontend-v2.md Phase 3d's
+    NodeStatusBadge). ids is a comma-separated list of Node ids; unlike the
+    public /stats, this reflects internal hierarchy structure, so it's
+    auth-gated like /state and /state_scan."""
+    redis = get_sync_redis_client()
+    node_ids = [i for i in ids.split(",") if i]
+    return JSONResponse(_node_stats(redis, node_ids))
 
 
 @router.get("/state")
