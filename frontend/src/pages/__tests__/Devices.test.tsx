@@ -15,7 +15,7 @@ function device(overrides: Partial<DeviceState> = {}): DeviceState {
     addr: "192.0.2.1",
     ok: true,
     ts: 1700000000000,
-    interval: 5000,
+    interval_ms: 5000,
     ...overrides,
   };
 }

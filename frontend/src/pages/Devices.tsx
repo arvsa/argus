@@ -49,7 +49,7 @@ export function DevicesPage() {
                       <td className="px-4 py-2.5 font-mono text-gray-800">{item.addr}</td>
                       <td className="px-4 py-2.5"><StatusBadge up={item.ok} /></td>
                       <td className="px-4 py-2.5 text-gray-500">{formatTs(item.ts)}</td>
-                      <td className="px-4 py-2.5 text-gray-500">{item.interval}ms</td>
+                      <td className="px-4 py-2.5 text-gray-500">{item.interval_ms}ms</td>
                     </tr>
                   ))}
                 </tbody>
