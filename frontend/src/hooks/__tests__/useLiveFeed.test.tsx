@@ -131,4 +131,40 @@ describe("useLiveFeed / WsIndicator / LiveFeedPanel", () => {
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["stats"] });
   });
+
+  it("invalidates node-stats when a per-node event arrives", async () => {
+    const { queryClient } = renderHarness();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const socket = MockWebSocket.instances[0];
+    act(() => socket.onopen?.());
+
+    act(() =>
+      socket.onmessage?.({
+        data: JSON.stringify({
+          channel: "events:node:node-1",
+          data: JSON.stringify({ addr: "1.1.1.1", ok: true, ts: 1, interval_ms: 5000 }),
+        }),
+      })
+    );
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["node-stats"] });
+  });
+
+  it("does not invalidate node-stats for the fixed fallback channel", async () => {
+    const { queryClient } = renderHarness();
+    const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+    const socket = MockWebSocket.instances[0];
+    act(() => socket.onopen?.());
+
+    act(() =>
+      socket.onmessage?.({
+        data: JSON.stringify({
+          channel: "pings:events",
+          data: JSON.stringify({ addr: "1.1.1.1", ok: true, ts: 1, interval_ms: 5000 }),
+        }),
+      })
+    );
+
+    expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ["node-stats"] });
+  });
 });

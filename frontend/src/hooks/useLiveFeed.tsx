@@ -69,6 +69,13 @@ export function LiveFeedProvider({ children }: { children: ReactNode }) {
         )
       );
       queryClient.invalidateQueries({ queryKey: ["stats"] });
+      // events:node:<id> is the only channel that corresponds to a specific
+      // Node's aggregate counters (see pingsvc/cmd/pingsvc/main.go's Lua
+      // script); the fixed pings:events fallback carries no node id, so
+      // there's nothing node-specific to invalidate for it.
+      if (envelope.channel.startsWith("events:node:")) {
+        queryClient.invalidateQueries({ queryKey: ["node-stats"] });
+      }
     };
 
     const keepalive = window.setInterval(() => {

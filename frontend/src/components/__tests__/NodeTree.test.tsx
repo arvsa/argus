@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { NodeTree } from "@/components/NodeTree";
 import * as nodesApi from "@/api/nodes";
+import * as nodeStatsApi from "@/api/nodeStats";
 import type { Node } from "@/api/nodes";
 import type { NodeType } from "@/api/nodeTypes";
 
@@ -12,6 +13,10 @@ vi.mock("@/api/nodes", () => ({
   createNode: vi.fn(),
   renameNode: vi.fn(),
   deleteNode: vi.fn(),
+}));
+
+vi.mock("@/api/nodeStats", () => ({
+  getNodeStats: vi.fn(),
 }));
 
 function node(overrides: Partial<Node> = {}): Node {
@@ -52,6 +57,7 @@ function renderTree(props: Partial<Parameters<typeof NodeTree>[0]> = {}) {
 describe("NodeTree", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(nodeStatsApi.getNodeStats).mockResolvedValue({});
   });
 
   it("shows a message when the root has no nodes", async () => {
@@ -213,5 +219,25 @@ describe("NodeTree", () => {
     await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
     expect(onSelect).toHaveBeenCalledWith(null);
+  });
+
+  it("fetches and renders node-stats for the currently displayed nodes", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [node()], count: 1 });
+    vi.mocked(nodeStatsApi.getNodeStats).mockResolvedValue({ "n-1": { up: 12, down: 2 } });
+    renderTree();
+
+    await screen.findByText("Main Campus");
+    expect(await screen.findByText("12 up")).toBeInTheDocument();
+    expect(screen.getByText("2 down")).toBeInTheDocument();
+    expect(nodeStatsApi.getNodeStats).toHaveBeenCalledWith(["n-1"]);
+  });
+
+  it("shows a placeholder while node-stats haven't resolved yet", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [node()], count: 1 });
+    vi.mocked(nodeStatsApi.getNodeStats).mockReturnValue(new Promise(() => {}));
+    renderTree();
+
+    await screen.findByText("Main Campus");
+    expect(screen.getByText("…")).toBeInTheDocument();
   });
 });
