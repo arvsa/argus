@@ -27,45 +27,51 @@ if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
     sentry_sdk.init(dsn=str(settings.SENTRY_DSN), enable_tracing=True)
 
 
-def get_lifespan_or_none():
-    return lifespan if settings.REDIS_URL is not None else None
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # startup: create both sync and async Redis clients and register them
-    sync_client = create_sync_redis_client()
-    set_sync_redis_client(sync_client)
+    # Redis/WS ping pipeline: only relevant for a role=client instance with a
+    # local pingsvc to listen to. A role=server instance has no local
+    # devices, so it must never create Redis clients or block on the
+    # connectivity check below (see plan/backend-lifespan-role-split-v1.md).
+    sync_client = None
+    async_client = None
+    stop_event = None
+    listener_task = None
 
-    async_client = create_async_redis_client()
-    set_async_redis_client(async_client)
+    if settings.ROLE == "client":
+        sync_client = create_sync_redis_client()
+        set_sync_redis_client(sync_client)
 
-    # ensure async connectivity (simple ping loop)
-    deadline = asyncio.get_event_loop().time() + 30.0
-    last_exc = None
-    while asyncio.get_event_loop().time() < deadline:
-        try:
-            # async_client is genuinely redis.asyncio.Redis; redis-py's
-            # stubs type ping() as Awaitable[bool] | bool to also cover the
-            # sync client's shared command-mixin signature.
-            await cast(Awaitable[bool], async_client.ping())
-            break
-        except Exception as exc:
-            last_exc = exc
-            await asyncio.sleep(0.5)
-    else:
-        # cleanup sync client if we fail to start
-        try:
-            sync_client.close()
-        except Exception:
-            pass
-        raise RuntimeError("Redis not reachable during startup") from last_exc
+        async_client = create_async_redis_client()
+        set_async_redis_client(async_client)
 
-    # start redis pub/sub listener (uses async client)
-    stop_event = asyncio.Event()
-    listener_task = asyncio.create_task(redis_listener_task(stop_event))
+        # ensure async connectivity (simple ping loop)
+        deadline = asyncio.get_event_loop().time() + 30.0
+        last_exc = None
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                # async_client is genuinely redis.asyncio.Redis; redis-py's
+                # stubs type ping() as Awaitable[bool] | bool to also cover the
+                # sync client's shared command-mixin signature.
+                await cast(Awaitable[bool], async_client.ping())
+                break
+            except Exception as exc:
+                last_exc = exc
+                await asyncio.sleep(0.5)
+        else:
+            # cleanup sync client if we fail to start
+            try:
+                sync_client.close()
+            except Exception:
+                pass
+            raise RuntimeError("Redis not reachable during startup") from last_exc
 
-    # start argus-server ingestion polling (no-ops if S3_BUCKET unset, see
+        # start redis pub/sub listener (uses async client)
+        stop_event = asyncio.Event()
+        listener_task = asyncio.create_task(redis_listener_task(stop_event))
+
+    # start argus-server ingestion polling -- independent of ROLE/Redis; it
+    # no-ops on its own if S3_BUCKET is unset (see
     # plan/dynamic-hierarchy-multi-zone-architecture.md §4.5)
     ingestion_stop_event = asyncio.Event()
     ingestion_bg_task = asyncio.create_task(ingestion_task(ingestion_stop_event))
@@ -73,16 +79,17 @@ async def lifespan(app: FastAPI):
     yield
 
     # shutdown: stop listener and close clients
-    stop_event.set()
-    try:
-        await listener_task
-    except Exception:
-        # if awaiting raised, cancel task
-        listener_task.cancel()
+    if stop_event is not None:
+        stop_event.set()
         try:
             await listener_task
         except Exception:
-            pass
+            # if awaiting raised, cancel task
+            listener_task.cancel()
+            try:
+                await listener_task
+            except Exception:
+                pass
 
     ingestion_stop_event.set()
     try:
@@ -95,23 +102,25 @@ async def lifespan(app: FastAPI):
             pass
 
     # close async client
-    try:
-        await async_client.close()
-    except Exception:
-        pass
+    if async_client is not None:
+        try:
+            await async_client.close()
+        except Exception:
+            pass
 
     # close sync client
-    try:
-        sync_client.close()
-    except Exception:
-        pass
+    if sync_client is not None:
+        try:
+            sync_client.close()
+        except Exception:
+            pass
 
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
     generate_unique_id_function=custom_generate_unique_id,
-    lifespan=get_lifespan_or_none(),
+    lifespan=lifespan,
 )
 
 
