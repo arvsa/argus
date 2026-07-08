@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER: EmailStr
     FIRST_SUPERUSER_PASSWORD: str
 
+    # Selects which half of the backend's startup wiring runs (see
+    # plan/backend-lifespan-role-split-v1.md). "client" (default) preserves
+    # today's behavior everywhere -- Redis/WS ping pipeline on, ingestion
+    # opt-in via S3_BUCKET. "server" skips Redis/WS entirely (a central
+    # argus-server has no local devices to feed a ping pipeline) and keeps
+    # only the ingestion task.
+    ROLE: Literal["client", "server"] = "client"
+
     # argus-server ingestion (plan/dynamic-hierarchy-multi-zone-architecture.md
     # §4.5). S3_BUCKET unset/empty disables ingestion entirely, matching
     # pingsvc's own opt-in pattern for its S3 push (-s3-bucket).
