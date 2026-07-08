@@ -4,6 +4,10 @@ import { AppShell } from "@/layouts/AppShell";
 import { AuthLayout } from "@/layouts/AuthLayout";
 import { RequireAuth } from "@/layouts/RequireAuth";
 import { Dashboard } from "@/pages/Dashboard";
+import { Login } from "@/pages/Login";
+import { Register } from "@/pages/Register";
+import { ForgotPassword } from "@/pages/ForgotPassword";
+import { ResetPassword } from "@/pages/ResetPassword";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -23,10 +27,10 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route element={<AuthLayout />}>
-            <Route path="/login" element={<ComingSoon title="Login" />} />
-            <Route path="/register" element={<ComingSoon title="Register" />} />
-            <Route path="/forgot-password" element={<ComingSoon title="Forgot Password" />} />
-            <Route path="/reset-password" element={<ComingSoon title="Reset Password" />} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
           </Route>
 
           <Route element={<RequireAuth />}>
