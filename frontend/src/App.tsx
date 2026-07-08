@@ -8,6 +8,7 @@ import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
 import { ForgotPassword } from "@/pages/ForgotPassword";
 import { ResetPassword } from "@/pages/ResetPassword";
+import { Profile } from "@/pages/Profile";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -40,7 +41,7 @@ export default function App() {
               <Route path="/hierarchy/types" element={<ComingSoon title="Hierarchy Types" />} />
               <Route path="/devices" element={<ComingSoon title="Devices" />} />
               <Route path="/zones" element={<ComingSoon title="Zones" />} />
-              <Route path="/profile" element={<ComingSoon title="Profile" />} />
+              <Route path="/profile" element={<Profile />} />
               <Route path="/admin/users" element={<ComingSoon title="Users" />} />
             </Route>
           </Route>
