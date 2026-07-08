@@ -59,6 +59,13 @@ export const renameNodeTypeSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
 
+// Node create/rename share the same shape as NodeType's -- name is the
+// only user-editable field on either (see backend/app/models.py's
+// NodeUpdate doc comment: node_type_id/parent_id are structural).
+export const nodeNameSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
@@ -68,3 +75,4 @@ export type UpdateMeInput = z.infer<typeof updateMeSchema>;
 export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
 export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
+export type NodeNameInput = z.infer<typeof nodeNameSchema>;

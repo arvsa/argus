@@ -51,6 +51,7 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
 | **adminer** | Database web UI |
+| **frontend** | React + Vite + TypeScript operator dashboard. Not containerized -- run it locally with `npm` against the Docker-composed backend (see Quick Start below). |
 
 ## Quick Start
 
@@ -69,18 +70,24 @@ docker compose watch backend
 
 # 4. Start the ping service (separate step, requires targets.txt from step 2)
 docker compose up pingsvc -d
+
+# 5. Run the frontend dashboard (separate terminal, not containerized)
+cd frontend
+npm install
+npm run dev
 ```
 
 > **Note (Apple Silicon):** The Dockerfile is multi-platform and builds natively for ARM64. No extra flags needed.
 
 Local URLs once running:
 
+- Frontend dashboard: http://localhost:5173
 - Backend API: http://localhost:8000
 - API docs (Swagger): http://localhost:8000/docs
 - Adminer (DB UI): http://localhost:8080
 - pingsvc Prometheus metrics: http://localhost:9090/metrics
 
-The first run may take a minute while the backend waits for MySQL and runs migrations.
+The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`). The Vite dev server proxies `/api` to `http://localhost:8000`, so no extra frontend config is needed against a local stack.
 
 This brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
 
@@ -113,6 +120,21 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 The **backend** subscribes to Redis on startup and fans incoming events out to all connected WebSocket clients at `/ws/pings`. The current snapshot of all device states is also queryable via REST at `/state` and `/state_scan`. If `S3_BUCKET` is configured, the backend additionally runs a background ingestion task that polls that bucket, verifies each snapshot's signature against a registered per-zone key, and upserts the results into `ClientSnapshot`/`ZoneSummary` — queryable at `GET /api/v1/zones/summary`, including a computed `is_stale` flag for zones that have stopped pushing.
 
 Devices, rooms, and buildings can additionally be organized into an arbitrary-depth, per-tenant hierarchy (`Node`/`NodeType`, `/api/v1/nodes`, `/api/v1/node-types`) instead of the fixed Campus→Building→Room→Device chain, configurable per zone via a `hierarchy.yaml` file loaded at startup.
+
+## Frontend
+
+The dashboard (`frontend/`) is a standalone Vite app, run with `npm` rather than Docker:
+
+```bash
+cd frontend
+npm install
+npm run dev      # dev server at http://localhost:5173, proxies /api to :8000
+npm test         # vitest
+npm run build    # tsc --build + production build
+npm run lint     # oxlint
+```
+
+It expects a running backend (via `docker compose`, see Quick Start) to talk to -- there's no mock/offline mode.
 
 ## Database Migrations
 
