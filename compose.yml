@@ -108,6 +108,10 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
+      # ROLE=client (default) is a plain zone backend; ROLE=server is the
+      # central argus-server (no local ping pipeline, ingestion opt-in via
+      # S3_BUCKET below) -- see README.md
+      - ROLE=${ROLE:-client}
       # argus-server ingestion (unset S3_BUCKET = ingestion task disabled,
       # this instance behaves as a plain zone backend -- see README.md)
       - S3_BUCKET=${S3_BUCKET:-}
