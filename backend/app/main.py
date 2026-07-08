@@ -70,11 +70,17 @@ async def lifespan(app: FastAPI):
         stop_event = asyncio.Event()
         listener_task = asyncio.create_task(redis_listener_task(stop_event))
 
-    # start argus-server ingestion polling -- independent of ROLE/Redis; it
-    # no-ops on its own if S3_BUCKET is unset (see
-    # plan/dynamic-hierarchy-multi-zone-architecture.md §4.5)
-    ingestion_stop_event = asyncio.Event()
-    ingestion_bg_task = asyncio.create_task(ingestion_task(ingestion_stop_event))
+    # argus-server ingestion polling: pulls zone snapshots pushed by other
+    # zones, an argus-server (central dashboard) concern only. A role=client
+    # instance (a zone's own local backend) must never start this, even if
+    # S3_BUCKET happens to be set, so a misconfigured zone can't start
+    # acting like a central server (see plan/backend-lifespan-role-split-v1.md
+    # and plan/dynamic-hierarchy-multi-zone-architecture.md §4.5).
+    ingestion_stop_event = None
+    ingestion_bg_task = None
+    if settings.ROLE == "server":
+        ingestion_stop_event = asyncio.Event()
+        ingestion_bg_task = asyncio.create_task(ingestion_task(ingestion_stop_event))
 
     yield
 
@@ -91,15 +97,16 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
-    ingestion_stop_event.set()
-    try:
-        await ingestion_bg_task
-    except Exception:
-        ingestion_bg_task.cancel()
+    if ingestion_bg_task is not None:
+        ingestion_stop_event.set()
         try:
             await ingestion_bg_task
         except Exception:
-            pass
+            ingestion_bg_task.cancel()
+            try:
+                await ingestion_bg_task
+            except Exception:
+                pass
 
     # close async client
     if async_client is not None:
