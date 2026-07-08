@@ -11,6 +11,7 @@ import { ResetPassword } from "@/pages/ResetPassword";
 import { Profile } from "@/pages/Profile";
 import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { NodesPage } from "@/pages/hierarchy/Nodes";
+import { DevicesPage } from "@/pages/Devices";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -44,7 +45,7 @@ export default function App() {
                 <Route path="/hierarchy/types" element={<NodeTypesPage />} />
                 <Route path="/admin/users" element={<ComingSoon title="Users" />} />
               </Route>
-              <Route path="/devices" element={<ComingSoon title="Devices" />} />
+              <Route path="/devices" element={<DevicesPage />} />
               <Route path="/zones" element={<ComingSoon title="Zones" />} />
               <Route path="/profile" element={<Profile />} />
             </Route>
