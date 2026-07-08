@@ -5,7 +5,6 @@ import { StatCard } from "@/components/StatCard";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
-import { LiveFeedPanel } from "@/components/LiveFeedPanel";
 
 const STATS_POLL_INTERVAL_MS = 10_000;
 
@@ -30,8 +29,6 @@ export function Dashboard() {
           <StatCard label="Down" value={data.down} icon={ArrowDownCircle} tone="danger" />
         </div>
       )}
-
-      <LiveFeedPanel />
     </div>
   );
 }

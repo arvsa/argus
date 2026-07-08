@@ -8,13 +8,6 @@ vi.mock("@/api/stats", () => ({
   getStats: vi.fn(),
 }));
 
-// LiveFeedPanel requires a LiveFeedProvider (a live WebSocket connection) --
-// out of scope for these stats-focused tests, covered separately in
-// useLiveFeed.test.tsx.
-vi.mock("@/components/LiveFeedPanel", () => ({
-  LiveFeedPanel: () => null,
-}));
-
 function renderDashboard() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
