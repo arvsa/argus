@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
+import { LiveFeedProvider } from "@/hooks/useLiveFeed";
+import { WsIndicator } from "@/components/WsIndicator";
 
 interface NavItem {
   to: string;
@@ -120,6 +122,7 @@ export function AppShell() {
   );
 
   return (
+    <LiveFeedProvider>
     <div className="flex h-screen overflow-hidden bg-gray-50">
       <aside
         className={cn(
@@ -152,7 +155,8 @@ export function AppShell() {
             {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
           </button>
 
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-4">
+            <WsIndicator />
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
                 {user?.full_name?.[0]?.toUpperCase() ?? user?.email?.[0]?.toUpperCase() ?? "?"}
@@ -169,5 +173,6 @@ export function AppShell() {
         </main>
       </div>
     </div>
+    </LiveFeedProvider>
   );
 }
