@@ -2,13 +2,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { AuthLayout } from "@/layouts/AuthLayout";
-import { RequireAuth } from "@/layouts/RequireAuth";
+import { RequireAuth, RequireSuperuser } from "@/layouts/RequireAuth";
 import { Dashboard } from "@/pages/Dashboard";
 import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
 import { ForgotPassword } from "@/pages/ForgotPassword";
 import { ResetPassword } from "@/pages/ResetPassword";
 import { Profile } from "@/pages/Profile";
+import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -38,11 +39,13 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<Dashboard />} />
               <Route path="/hierarchy" element={<ComingSoon title="Hierarchy" />} />
-              <Route path="/hierarchy/types" element={<ComingSoon title="Hierarchy Types" />} />
+              <Route element={<RequireSuperuser />}>
+                <Route path="/hierarchy/types" element={<NodeTypesPage />} />
+                <Route path="/admin/users" element={<ComingSoon title="Users" />} />
+              </Route>
               <Route path="/devices" element={<ComingSoon title="Devices" />} />
               <Route path="/zones" element={<ComingSoon title="Zones" />} />
               <Route path="/profile" element={<Profile />} />
-              <Route path="/admin/users" element={<ComingSoon title="Users" />} />
             </Route>
           </Route>
 

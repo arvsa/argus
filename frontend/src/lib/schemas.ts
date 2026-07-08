@@ -41,9 +41,30 @@ export const updateMeSchema = z.object({
   email: z.email("Invalid email").optional(),
 });
 
+// First root-level NodeType for a tenant that has none yet -- rank 0 and no
+// parent_type_id are implied, not user-editable (see plan/frontend-v2.md
+// Phase 2a: the API only allows appending to a rank chain, never inserting).
+export const firstNodeTypeSchema = z.object({
+  tenant_id: z.string().min(1, "Tenant ID is required"),
+  name: z.string().min(1, "Name is required"),
+});
+
+// A new rank appended to the end of an already-seeded chain -- tenant_id,
+// rank, and parent_type_id are all derived from the existing chain.
+export const appendNodeTypeSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+});
+
+export const renameNodeTypeSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 export type ResetPasswordInput = z.infer<typeof resetPasswordSchema>;
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export type UpdateMeInput = z.infer<typeof updateMeSchema>;
+export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
+export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
+export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
