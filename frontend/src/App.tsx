@@ -10,6 +10,7 @@ import { ForgotPassword } from "@/pages/ForgotPassword";
 import { ResetPassword } from "@/pages/ResetPassword";
 import { Profile } from "@/pages/Profile";
 import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
+import { NodesPage } from "@/pages/hierarchy/Nodes";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -38,7 +39,7 @@ export default function App() {
           <Route element={<RequireAuth />}>
             <Route element={<AppShell />}>
               <Route path="/" element={<Dashboard />} />
-              <Route path="/hierarchy" element={<ComingSoon title="Hierarchy" />} />
+              <Route path="/hierarchy" element={<NodesPage />} />
               <Route element={<RequireSuperuser />}>
                 <Route path="/hierarchy/types" element={<NodeTypesPage />} />
                 <Route path="/admin/users" element={<ComingSoon title="Users" />} />
