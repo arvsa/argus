@@ -4,14 +4,22 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Folder, Plus, Trash2 } from "lucide-react";
 import { getNodes, createNode, renameNode, deleteNode, type Node } from "@/api/nodes";
+import { getNodeStats, type NodeStats } from "@/api/nodeStats";
 import type { NodeType } from "@/api/nodeTypes";
 import { nodeNameSchema, type NodeNameInput } from "@/lib/schemas";
 import { Spinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { NodeStatusBadge } from "@/components/NodeStatusBadge";
 import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { cn } from "@/lib/utils";
+
+// Poll fallback for per-node aggregate counts -- the WS envelope (Phase 3c's
+// useLiveFeed) invalidates ["node-stats"] on every events:node:<id> message
+// for near-real-time updates, but this keeps counts eventually correct even
+// if the WebSocket is down (see plan/frontend-v2.md Phase 3d).
+const NODE_STATS_POLL_INTERVAL_MS = 15_000;
 
 interface NodeTreeProps {
   parentId: string | null;
@@ -45,6 +53,14 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["nodes", parentId],
     queryFn: () => getNodes({ parentId }),
+  });
+
+  const nodeIds = data?.data.map((n) => n.id) ?? [];
+  const { data: nodeStats } = useQuery({
+    queryKey: ["node-stats", parentId],
+    queryFn: () => getNodeStats(nodeIds),
+    enabled: nodeIds.length > 0,
+    refetchInterval: NODE_STATS_POLL_INTERVAL_MS,
   });
 
   const createRootMutation = useMutation({
@@ -100,6 +116,7 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
               depth={depth}
               nodeTypes={nodeTypes}
               listParentId={parentId}
+              stats={nodeStats?.[node.id]}
             />
           ))}
         </ul>
@@ -129,6 +146,7 @@ function NodeRow({
   depth,
   nodeTypes,
   listParentId,
+  stats,
 }: {
   node: Node;
   selectedId?: string | null;
@@ -136,6 +154,7 @@ function NodeRow({
   depth: number;
   nodeTypes: NodeType[];
   listParentId: string | null;
+  stats: NodeStats[string] | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [addChildOpen, setAddChildOpen] = useState(false);
@@ -194,6 +213,9 @@ function NodeRow({
           <Folder className="h-3.5 w-3.5 shrink-0 text-gray-400" />
           <span className="truncate">{node.name}</span>
         </button>
+        <div className="shrink-0">
+          <NodeStatusBadge up={stats?.up} down={stats?.down} />
+        </div>
         <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
           {childType && (
             <button
