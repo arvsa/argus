@@ -13,6 +13,7 @@ import { SlideOver } from "@/components/SlideOver";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { NodeStatusBadge } from "@/components/NodeStatusBadge";
 import { useApiErrorToast } from "@/hooks/useErrorToast";
+import { useAppConfig } from "@/hooks/useAppConfig";
 import { cn } from "@/lib/utils";
 
 // Poll fallback for per-node aggregate counts -- the WS envelope (Phase 3c's
@@ -49,6 +50,7 @@ function findChildTypes(types: NodeType[], parentTypeId: string): NodeType[] {
 export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes = [] }: NodeTreeProps) {
   const queryClient = useQueryClient();
   const errorToast = useApiErrorToast();
+  const { role } = useAppConfig();
   const [addRootOpen, setAddRootOpen] = useState(false);
   const rootTypes = depth === 0 ? findRootTypes(nodeTypes) : [];
 
@@ -61,7 +63,9 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
   const { data: nodeStats } = useQuery({
     queryKey: ["node-stats", parentId],
     queryFn: () => getNodeStats(nodeIds),
-    enabled: nodeIds.length > 0,
+    // /node-stats lives in the ping-pipeline router, which a server
+    // deployment doesn't mount -- skip the poll instead of 404ing forever.
+    enabled: nodeIds.length > 0 && role === "client",
     refetchInterval: NODE_STATS_POLL_INTERVAL_MS,
   });
 

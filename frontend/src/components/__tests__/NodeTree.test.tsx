@@ -19,6 +19,12 @@ vi.mock("@/api/nodeStats", () => ({
   getNodeStats: vi.fn(),
 }));
 
+// NodeTree probes the deployment role to decide whether to poll
+// /node-stats; pin it to "client" so these tests keep exercising the poll.
+vi.mock("@/api/appConfig", () => ({
+  getAppConfig: vi.fn().mockResolvedValue({ role: "client" }),
+}));
+
 function node(overrides: Partial<Node> = {}): Node {
   return {
     id: "n-1",
