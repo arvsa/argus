@@ -12,10 +12,19 @@ client.interceptors.request.use((config) => {
   return config;
 });
 
+// The backend's get_current_user (backend/app/api/deps.py) raises 403, not
+// 401, for a token that fails jwt.decode -- but a *valid* token hitting a
+// superuser-only route also gets 403 ("doesn't have enough privileges").
+// Only the former should force a logout; the latter is a legitimate,
+// stay-logged-in permission denial that RequireSuperuser's own UI handles.
+const INVALID_TOKEN_DETAIL = "Could not validate credentials";
+
 client.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const status = err.response?.status;
+    const isInvalidToken = status === 403 && err.response?.data?.detail === INVALID_TOKEN_DETAIL;
+    if (status === 401 || isInvalidToken) {
       useAuthStore.getState().logout();
       window.location.href = "/login";
     }

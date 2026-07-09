@@ -59,6 +59,9 @@ services:
     ports:
       - "8080:8080"
 
+  frontend:
+    restart: "no"
+
   backend:
     restart: "no"
     ports:

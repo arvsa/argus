@@ -87,8 +87,12 @@ services:
         restart: true
       prestart:
         condition: service_completed_successfully
+      # required: false -- redis only starts under the "client" profile
+      # (ROLE=server has no local ping pipeline and never touches Redis;
+      # see scripts/run.sh and backend/app/main.py's lifespan gating).
       redis:
         condition: service_started
+        required: false
     env_file:
       - .env
     environment:
@@ -148,9 +152,48 @@ services:
 
       # Enable redirection for HTTP and HTTPS
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.middlewares=https-redirect
+
+  frontend:
+    image: '${DOCKER_IMAGE_FRONTEND?Variable not set}:${TAG-latest}'
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      target: dev
+    restart: always
+    networks:
+      - traefik-public
+      - default
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      # Compose DNS name, not localhost -- see frontend/vite.config.ts
+      - VITE_API_PROXY_TARGET=http://backend:8000
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+    ports:
+      - "5173:5173"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik-public
+      - traefik.constraint-label=traefik-public
+      - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=5173
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.entrypoints=http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.entrypoints=https
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls.certresolver=le
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.middlewares=https-redirect
+
+  # redis and pingsvc only start under the "client" profile -- a central
+  # argus-server (ROLE=server) has no local devices to ping, so it never
+  # needs either. Use scripts/run.sh client|server to pick the right stack.
   redis:
     image: redis:8-alpine
     restart: always
+    profiles: ["client"]
     networks:
       - traefik-public
       - default
@@ -166,6 +209,7 @@ services:
       dockerfile: Dockerfile   # adjust path if needed
     image: '${DOCKER_IMAGE_PINGSVC?Variable not set}:${TAG-latest}'
     restart: always
+    profiles: ["client"]
     networks:
       - traefik-public
       - default
