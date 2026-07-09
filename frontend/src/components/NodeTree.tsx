@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight, Folder, Plus, Trash2 } from "lucide-react";
 import { getNodes, createNode, renameNode, deleteNode, type Node } from "@/api/nodes";
 import { getNodeStats, type NodeStats } from "@/api/nodeStats";
 import type { NodeType } from "@/api/nodeTypes";
-import { nodeNameSchema, type NodeNameInput } from "@/lib/schemas";
+import { nodeCreateSchema, type NodeCreateInput, nodeNameSchema, type NodeNameInput } from "@/lib/schemas";
 import { Spinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { SlideOver } from "@/components/SlideOver";
@@ -29,16 +29,18 @@ interface NodeTreeProps {
   nodeTypes?: NodeType[];
 }
 
-// A tenant's rank chain is linear (NodeType.parent_type_id), so each type
-// has at most one direct child type -- these just walk that chain rather
-// than assuming any particular rank numbering.
-function findRootType(types: NodeType[]): NodeType | undefined {
-  const roots = types.filter((t) => t.parent_type_id === null);
-  return roots.length === 1 ? roots[0] : undefined;
+// Returns every NodeType that's a valid choice for a given position (root,
+// or child of a given parent type) -- today's NodeTypesPage only ever
+// builds one linear chain per tenant, so this is usually a single-element
+// array, but it doesn't assume that: if a tenant ever has more than one
+// candidate type at a position, the create form surfaces a picker instead
+// of silently guessing (see NodeCreateForm below).
+function findRootTypes(types: NodeType[]): NodeType[] {
+  return types.filter((t) => t.parent_type_id === null);
 }
 
-function findChildType(types: NodeType[], parentTypeId: string): NodeType | undefined {
-  return types.find((t) => t.parent_type_id === parentTypeId);
+function findChildTypes(types: NodeType[], parentTypeId: string): NodeType[] {
+  return types.filter((t) => t.parent_type_id === parentTypeId);
 }
 
 // Recursive, depth-agnostic tree: each level is its own lazy-loaded query
@@ -48,7 +50,7 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
   const queryClient = useQueryClient();
   const errorToast = useApiErrorToast();
   const [addRootOpen, setAddRootOpen] = useState(false);
-  const rootType = depth === 0 ? findRootType(nodeTypes) : undefined;
+  const rootTypes = depth === 0 ? findRootTypes(nodeTypes) : [];
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["nodes", parentId],
@@ -64,8 +66,7 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
   });
 
   const createRootMutation = useMutation({
-    mutationFn: (d: NodeNameInput) =>
-      createNode({ name: d.name, node_type_id: rootType!.id, parent_id: null }),
+    mutationFn: (d: NodeCreateInput) => createNode({ name: d.name, node_type_id: d.node_type_id, parent_id: null }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["nodes", null] });
       setAddRootOpen(false);
@@ -89,7 +90,7 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
 
   return (
     <div>
-      {depth === 0 && rootType && (
+      {depth === 0 && rootTypes.length > 0 && (
         <div className="mb-2 flex justify-end">
           <button
             onClick={() => setAddRootOpen(true)}
@@ -122,15 +123,16 @@ export function NodeTree({ parentId, selectedId, onSelect, depth = 0, nodeTypes 
         </ul>
       )}
 
-      {rootType && (
+      {rootTypes.length > 0 && (
         <SlideOver
           open={addRootOpen}
           onOpenChange={setAddRootOpen}
           title="Add root node"
         >
-          <NodeNameForm
+          <NodeCreateForm
+            nodeTypes={rootTypes}
             submitLabel="Add node"
-            onSubmit={(name) => createRootMutation.mutate({ name })}
+            onSubmit={(d) => createRootMutation.mutate(d)}
             isSubmitting={createRootMutation.isPending}
           />
         </SlideOver>
@@ -163,11 +165,11 @@ function NodeRow({
 
   const queryClient = useQueryClient();
   const errorToast = useApiErrorToast();
-  const childType = findChildType(nodeTypes, node.node_type_id);
+  const childTypes = findChildTypes(nodeTypes, node.node_type_id);
 
   const createChildMutation = useMutation({
-    mutationFn: (d: NodeNameInput) =>
-      createNode({ name: d.name, node_type_id: childType!.id, parent_id: node.id }),
+    mutationFn: (d: NodeCreateInput) =>
+      createNode({ name: d.name, node_type_id: d.node_type_id, parent_id: node.id }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["nodes", node.id] });
       setAddChildOpen(false);
@@ -217,7 +219,7 @@ function NodeRow({
           <NodeStatusBadge up={stats?.up} down={stats?.down} />
         </div>
         <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-          {childType && (
+          {childTypes.length > 0 && (
             <button
               onClick={() => setAddChildOpen(true)}
               className="rounded p-1 text-gray-400 hover:bg-blue-50 hover:text-blue-600"
@@ -258,15 +260,16 @@ function NodeRow({
         />
       )}
 
-      {childType && (
+      {childTypes.length > 0 && (
         <SlideOver
           open={addChildOpen}
           onOpenChange={setAddChildOpen}
           title={`Add child to ${node.name}`}
         >
-          <NodeNameForm
+          <NodeCreateForm
+            nodeTypes={childTypes}
             submitLabel="Add node"
-            onSubmit={(name) => createChildMutation.mutate({ name })}
+            onSubmit={(d) => createChildMutation.mutate(d)}
             isSubmitting={createChildMutation.isPending}
           />
         </SlideOver>
@@ -313,6 +316,73 @@ function NodeNameForm({
         />
         {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
       </div>
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+      >
+        {isSubmitting && <Spinner className="h-4 w-4 border-white border-t-blue-300" />}
+        {submitLabel}
+      </button>
+    </form>
+  );
+}
+
+// Node creation, unlike rename, also needs a NodeType -- this is the one
+// place Hierarchy Types (the admin-defined shape) becomes a visible choice
+// when building the actual tree. With exactly one candidate type (today's
+// common case, since NodeTypesPage only builds one linear chain per
+// tenant) it's auto-selected and the field is hidden, preserving the
+// original one-click UX; with more than one, a required Type select is
+// shown.
+function NodeCreateForm({
+  nodeTypes,
+  submitLabel,
+  onSubmit,
+  isSubmitting,
+}: {
+  nodeTypes: NodeType[];
+  submitLabel: string;
+  onSubmit: (data: NodeCreateInput) => void;
+  isSubmitting: boolean;
+}) {
+  const { register, handleSubmit, formState: { errors } } = useForm<NodeCreateInput>({
+    resolver: zodResolver(nodeCreateSchema),
+    defaultValues: { name: "", node_type_id: nodeTypes.length === 1 ? nodeTypes[0].id : "" },
+  });
+  return (
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+      <div className="space-y-1">
+        <label htmlFor="node-name" className="text-sm font-medium text-gray-700">Name</label>
+        <input
+          id="node-name"
+          autoFocus
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          {...register("name")}
+        />
+        {errors.name && <p className="text-xs text-red-600">{errors.name.message}</p>}
+      </div>
+      {nodeTypes.length > 1 && (
+        <div className="space-y-1">
+          <label htmlFor="node-type" className="text-sm font-medium text-gray-700">Type</label>
+          <select
+            id="node-type"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+            {...register("node_type_id")}
+          >
+            <option value="" disabled>
+              Select a type
+            </option>
+            {nodeTypes.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          {errors.node_type_id && <p className="text-xs text-red-600">{errors.node_type_id.message}</p>}
+        </div>
+      )}
+      {nodeTypes.length === 1 && <input type="hidden" {...register("node_type_id")} />}
       <button
         type="submit"
         disabled={isSubmitting}

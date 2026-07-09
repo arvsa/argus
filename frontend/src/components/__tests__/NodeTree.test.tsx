@@ -144,6 +144,46 @@ describe("NodeTree", () => {
     });
   });
 
+  it("does not show a Type select when only one candidate root NodeType exists", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [], count: 0 });
+    const user = userEvent.setup();
+    renderTree({ nodeTypes: [nodeType()] });
+
+    await user.click(await screen.findByRole("button", { name: /add root node/i }));
+    expect(screen.queryByLabelText(/type/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a Type select when multiple candidate root NodeTypes exist", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [], count: 0 });
+    const user = userEvent.setup();
+    renderTree({
+      nodeTypes: [nodeType({ id: "nt-1", name: "Region" }), nodeType({ id: "nt-1b", name: "Zone" })],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /add root node/i }));
+    expect(screen.getByLabelText(/type/i)).toBeInTheDocument();
+  });
+
+  it("creates a root node with the user-selected type when multiple candidates exist", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(nodesApi.createNode).mockResolvedValue(node());
+    const user = userEvent.setup();
+    renderTree({
+      nodeTypes: [nodeType({ id: "nt-1", name: "Region" }), nodeType({ id: "nt-1b", name: "Zone" })],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /add root node/i }));
+    await user.type(screen.getByLabelText(/^name$/i), "Main Campus");
+    await user.selectOptions(screen.getByLabelText(/type/i), "nt-1b");
+    await user.click(screen.getByRole("button", { name: /^add node$/i }));
+
+    expect(nodesApi.createNode).toHaveBeenCalledWith({
+      name: "Main Campus",
+      node_type_id: "nt-1b",
+      parent_id: null,
+    });
+  });
+
   it("shows an Add child button only when a child NodeType exists for the node's type", async () => {
     vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [node()], count: 1 });
     renderTree({
@@ -178,6 +218,47 @@ describe("NodeTree", () => {
     expect(nodesApi.createNode).toHaveBeenCalledWith({
       name: "Building A",
       node_type_id: "nt-2",
+      parent_id: "n-1",
+    });
+  });
+
+  it("shows a Type select when multiple candidate child NodeTypes exist for the parent's type", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [node()], count: 1 });
+    const user = userEvent.setup();
+    renderTree({
+      nodeTypes: [
+        nodeType(),
+        nodeType({ id: "nt-2", name: "Site", rank: 1, parent_type_id: "nt-1" }),
+        nodeType({ id: "nt-2b", name: "Zone", rank: 1, parent_type_id: "nt-1" }),
+      ],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /add child to main campus/i }));
+    expect(screen.getByLabelText(/type/i)).toBeInTheDocument();
+  });
+
+  it("creates a child node with the user-selected type when multiple candidates exist", async () => {
+    vi.mocked(nodesApi.getNodes).mockResolvedValue({ data: [node()], count: 1 });
+    vi.mocked(nodesApi.createNode).mockResolvedValue(
+      node({ id: "n-2", name: "Building A", parent_id: "n-1" })
+    );
+    const user = userEvent.setup();
+    renderTree({
+      nodeTypes: [
+        nodeType(),
+        nodeType({ id: "nt-2", name: "Site", rank: 1, parent_type_id: "nt-1" }),
+        nodeType({ id: "nt-2b", name: "Zone", rank: 1, parent_type_id: "nt-1" }),
+      ],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /add child to main campus/i }));
+    await user.type(screen.getByLabelText(/^name$/i), "Building A");
+    await user.selectOptions(screen.getByLabelText(/type/i), "nt-2b");
+    await user.click(screen.getByRole("button", { name: /^add node$/i }));
+
+    expect(nodesApi.createNode).toHaveBeenCalledWith({
+      name: "Building A",
+      node_type_id: "nt-2b",
       parent_id: "n-1",
     });
   });
