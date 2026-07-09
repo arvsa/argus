@@ -50,14 +50,14 @@ describe("api client response interceptor", () => {
     expect(window.location.href).toBe("");
   });
 
-  it("logs out and redirects to /login on a 403 with an invalid/expired token", async () => {
-    // backend/app/api/deps.py's get_current_user raises 403 (not 401) for a
+  it("logs out and redirects to /login on a 401 for an invalid/expired token", async () => {
+    // backend/app/api/deps.py's get_current_user raises 401 (not 403) for a
     // token that fails jwt.decode -- a stale/corrupt token in localStorage
     // would otherwise leave the user stuck on an authenticated-looking page
     // with every request silently failing (and retried by React Query).
     const rejected = (client.interceptors.response as any).handlers[0].rejected;
     await expect(
-      rejected({ response: { status: 403, data: { detail: "Could not validate credentials" } } })
+      rejected({ response: { status: 401, data: { detail: "Could not validate credentials" } } })
     ).rejects.toBeTruthy();
 
     expect(useAuthStore.getState().token).toBeNull();
@@ -66,8 +66,9 @@ describe("api client response interceptor", () => {
 
   it("does not log out on a 403 for insufficient privileges", async () => {
     // A validly-authenticated non-superuser hitting a superuser-only route
-    // gets this same 403 status from get_current_active_superuser -- must
-    // stay logged in; RequireSuperuser's own UI handles this case.
+    // gets 403 from get_current_active_superuser -- must stay logged in;
+    // RequireSuperuser's own UI handles this case. 403 is never treated as
+    // an auth failure -- only 401 (get_current_user) is.
     const rejected = (client.interceptors.response as any).handlers[0].rejected;
     await expect(
       rejected({ response: { status: 403, data: { detail: "The user doesn't have enough privileges" } } })

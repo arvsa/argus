@@ -35,9 +35,16 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
         )
         token_data = TokenPayload(**payload)
     except (InvalidTokenError, ValidationError):
+        # 401, not 403: this is an authentication failure (missing/expired/
+        # forged token), distinct from get_current_active_superuser's 403
+        # below (a *valid* token that's merely missing a privilege). A
+        # client can't safely force-logout on 403 alone since that would
+        # also fire for legitimate permission errors -- 401 is the
+        # unambiguous signal to log out and redirect to /login.
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     user = session.get(User, UUID(token_data.sub))
     if not user:
