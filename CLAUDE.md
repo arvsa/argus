@@ -69,28 +69,16 @@ ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_
 
 `ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
 
-### Multi-zone export/ingestion pipeline
-
-```
-pingsvc -role=both (argus-client)
-     ↓ every N seconds: gzip snapshot of stats:node:*/pings:state
-Local spool dir → Ed25519-signed manifest → push to S3-compatible object storage
-     ↓ key layout: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<ts>.json.gz(+.manifest.json)
-argus-server backend ingestion_task (startup lifespan, polls the bucket)
-     ↓ verifies signature against the *registered* ZoneSigningKey (never the manifest's embedded key)
-ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_stale)
-```
-
-`ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
-
 ### Data model
 
 ```
-NodeType → Node
+NodeType → Node → Device
 ```
-Admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart) — this replaced an earlier fixed `Campus → Building → Room → Device` chain, which has been fully retired (tables dropped, routes and tests removed). All relationships use `ondelete="CASCADE"`. All PKs are UUIDs generated server-side.
+`NodeType`/`Node` form an admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart — see [hierarchy.md](hierarchy.md) for the full setup walkthrough). This replaced an earlier fixed `Campus → Building → Room → Device` chain, fully retired (tables dropped, routes and tests removed, no trace left in `models.py`).
 
-The single `models.py` file contains both SQLModel DB tables and all Pydantic request/response schemas (pattern: `XxxBase`, `XxxCreate`, `XxxUpdate`, `XxxPublic`, `XxxsPublic`, `Xxx` table). This includes the legacy `Campus`/`Building`/`Room`/`Device` chain, the generalized `NodeType`/`Node` hierarchy (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart), and the multi-zone tables `ClientSnapshot`/`ZoneSummary`/`ZoneSigningKey`.
+`Device` (`/api/v1/devices`) is the bridge between a monitored address and a place in that hierarchy: a globally-unique `addr` plus an optional `node_id`. Don't confuse it with the unrelated `DeviceState`/`getState` concept on the live ping-status page (`frontend/src/pages/Devices.tsx`, `/state` route) — that's ephemeral Redis-backed status, this is a persisted assignment record. Most FK relationships use `ondelete="CASCADE"`, but `Device.node_id` deliberately uses `ondelete="SET NULL"`: deleting a Node orphans its devices' assignment rather than deleting the device rows, since they still represent real, monitored addresses. `POST /devices/` treats re-adding an orphaned `addr` (one whose Node was deleted) as a reassignment rather than a conflict, as long as the caller is actually assigning it to a node. `GET /devices/targets-export` renders every Device into pingsvc's flat target-file format (`addr,ancestor1;ancestor2;...;node_id`, root-first) since pingsvc itself has no hierarchy/device concept of its own — regenerating and restarting pingsvc after edits is a manual step, not a live hot-reload (see `scripts/regenerate-targets.sh`).
+
+All PKs are UUIDs generated server-side. The single `models.py` file contains both SQLModel DB tables and all Pydantic request/response schemas (pattern: `XxxBase`, `XxxCreate`, `XxxUpdate`, `XxxPublic`, `XxxsPublic`, `Xxx` table): the `NodeType`/`Node`/`Device` hierarchy above, plus the multi-zone tables `ClientSnapshot`/`ZoneSummary`/`ZoneSigningKey`.
 
 ### Auth
 
