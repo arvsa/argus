@@ -74,6 +74,13 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
+    volumes:
+      # Optional -- cp hierarchy.yaml.example hierarchy.yaml to use it (see
+      # hierarchy.md). If absent, Docker creates this as an empty directory
+      # rather than erroring; seed_hierarchy.py's is_file() check treats
+      # that the same as "not configured" and skips seeding, so this mount
+      # is always safe to leave in place even when unused.
+      - ./hierarchy.yaml:/app/backend/hierarchy.yaml:ro
 
   backend:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'

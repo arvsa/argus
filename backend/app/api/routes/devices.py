@@ -2,6 +2,7 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import PlainTextResponse
 from sqlmodel import func, select
 
 from app import crud
@@ -13,6 +14,7 @@ from app.models import (
     DevicesPublic,
     DeviceUpdate,
     Message,
+    Node,
 )
 
 router = APIRouter(prefix="/devices", tags=["devices"])
@@ -40,6 +42,39 @@ def read_devices(
     count = session.exec(count_statement).one()
     devices = session.exec(statement.offset(skip).limit(limit)).all()
     return DevicesPublic(data=devices, count=count)
+
+
+# Registered before /{id} -- FastAPI/Starlette match routes in registration
+# order, and /{id} (a str-typed path segment before validation) would
+# otherwise swallow a request for the literal path "targets-export" and
+# fail UUID validation instead of ever reaching this route.
+@router.get("/targets-export", dependencies=[Depends(get_current_active_superuser)])
+def get_devices_targets_export(session: SessionDep) -> PlainTextResponse:
+    """
+    Export every Device as a pingsvc-compatible target file (see
+    pingsvc/cmd/pingsvc/main.go's parseTargetLine and
+    plan/device-node-assignment-bridge-v1.md): one line per device, either
+    a bare "addr" (unassigned) or "addr,ancestor1;ancestor2;...;node_id"
+    (root-first ancestors from Node.path_ids, then the assigned node
+    itself last). Superuser-gated -- this reveals the full address +
+    hierarchy map in bulk, higher sensitivity than a single device read.
+    """
+    devices = session.exec(select(Device)).all()
+    lines = []
+    for device in devices:
+        if device.node_id is None:
+            lines.append(device.addr)
+            continue
+        node = session.get(Node, device.node_id)
+        if node is None:
+            # Shouldn't happen (ondelete=SET NULL keeps this in sync), but
+            # degrade to a bare address rather than erroring the whole export.
+            lines.append(device.addr)
+            continue
+        chain = [*node.path_ids, str(node.id)]
+        lines.append(f"{device.addr},{';'.join(chain)}")
+    body = "\n".join(lines) + ("\n" if lines else "")
+    return PlainTextResponse(body)
 
 
 @router.get("/{id}", response_model=DevicePublic)

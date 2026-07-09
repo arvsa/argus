@@ -2,6 +2,11 @@
 .env
 !.env.example
 
+# Hierarchy shape config (real deployment-specific config; ships as an
+# example only -- see hierarchy.md)
+hierarchy.yaml
+!hierarchy.yaml.example
+
 # Python
 __pycache__/
 *.py[cod]

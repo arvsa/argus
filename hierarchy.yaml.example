@@ -1,0 +1,29 @@
+# Defines this zone's asset hierarchy *shape* -- the rank levels, not the
+# actual Node instances (Buildings/Racks/etc. are created afterward via the
+# frontend's Hierarchy page, or the API). Loaded once per prestart by
+# backend/app/seed_hierarchy.py; safe to re-run (idempotent), but renaming
+# or removing a rank that already has real Nodes under it fails prestart
+# loudly instead of silently mutating live data -- see
+# plan/dynamic-hierarchy-multi-zone-architecture.md §4.7.
+#
+# To use: cp hierarchy.yaml.example hierarchy.yaml, edit tenant_id/levels
+# below, then (re)start the stack. See hierarchy.md for the full workflow,
+# including assigning devices to the Nodes you create afterward.
+#
+# Each entry in `levels` becomes one rank, root-first (list index == rank).
+# This only expresses a strict linear chain (each level has exactly one
+# parent level) -- not needed for v1: branching types at the same rank.
+
+tenant_id: acme-corp
+levels:
+  - name: Region
+  - name: Site
+  - name: Rack
+
+# A campus/building-shaped alternative, for reference:
+#
+# tenant_id: campus-a
+# levels:
+#   - name: Campus
+#   - name: Building
+#   - name: Room

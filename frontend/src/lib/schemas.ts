@@ -66,6 +66,10 @@ export const nodeNameSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
 
+export const deviceAssignmentSchema = z.object({
+  addr: z.string().min(1, "Address is required"),
+});
+
 // Node creation additionally needs the NodeType to create it as -- see
 // NodeTree.tsx's NodeCreateForm, which only renders the field when there's
 // more than one candidate type for the position (root vs. child of a
@@ -106,6 +110,7 @@ export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
 export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
 export type NodeNameInput = z.infer<typeof nodeNameSchema>;
+export type DeviceAssignmentInput = z.infer<typeof deviceAssignmentSchema>;
 export type NodeCreateInput = z.infer<typeof nodeCreateSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type EditUserInput = z.infer<typeof editUserSchema>;
