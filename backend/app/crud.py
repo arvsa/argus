@@ -8,6 +8,8 @@ from app.core.security import get_password_hash, verify_password
 from app.models import (
     ClientSnapshot,
     ClientSnapshotCreate,
+    Device,
+    DeviceCreate,
     Item,
     ItemCreate,
     Node,
@@ -83,9 +85,8 @@ def create_item(*, session: Session, item_in: ItemCreate, owner_id: uuid.UUID) -
     session.refresh(db_item)
     return db_item
 
-def create_node_type(
-    *, session: Session, node_type_create: NodeTypeCreate
-) -> NodeType:
+
+def create_node_type(*, session: Session, node_type_create: NodeTypeCreate) -> NodeType:
     """Create a NodeType, validating it extends its tenant's rank chain by
     exactly one level. See plan/dynamic-hierarchy-multi-zone-architecture.md §4.1."""
     if node_type_create.parent_type_id is None:
@@ -98,7 +99,9 @@ def create_node_type(
         if parent_type.tenant_id != node_type_create.tenant_id:
             raise ValueError("parent_type_id must belong to the same tenant_id")
         if node_type_create.rank != parent_type.rank + 1:
-            raise ValueError("rank must be exactly one greater than parent_type_id's rank")
+            raise ValueError(
+                "rank must be exactly one greater than parent_type_id's rank"
+            )
 
     db_obj = NodeType.model_validate(node_type_create)
     session.add(db_obj)
@@ -117,7 +120,9 @@ def create_node(*, session: Session, node_create: NodeCreate) -> Node:
 
     if node_create.parent_id is None:
         if node_type.parent_type_id is not None:
-            raise ValueError("this node_type requires a parent_id (parent_type_id is set)")
+            raise ValueError(
+                "this node_type requires a parent_id (parent_type_id is set)"
+            )
         path_ids: list[str] = []
     else:
         parent = session.get(Node, node_create.parent_id)
@@ -130,6 +135,18 @@ def create_node(*, session: Session, node_create: NodeCreate) -> Node:
         path_ids = [*parent.path_ids, str(parent.id)]
 
     db_obj = Node.model_validate(node_create, update={"path_ids": path_ids})
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def get_device_by_addr(*, session: Session, addr: str) -> Device | None:
+    return session.exec(select(Device).where(Device.addr == addr)).first()
+
+
+def create_device(*, session: Session, device_create: DeviceCreate) -> Device:
+    db_obj = Device.model_validate(device_create)
     session.add(db_obj)
     session.commit()
     session.refresh(db_obj)
