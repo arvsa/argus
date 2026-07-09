@@ -6,15 +6,34 @@ Requires a live Redis (runs inside Docker via `docker compose exec backend pytes
 All tests seed and clean up their own Redis keys.
 """
 
+import asyncio
 import concurrent.futures
 import json
 
 import pytest
+from fastapi import WebSocketDisconnect
 from fastapi.testclient import TestClient
 
+from app.api.routes.pings import ws_pings
+from app.core.broadcast import broadcaster
 from app.core.config import settings
 from app.core.redis import RedisManager
 from tests.utils.utils import get_superuser_token_headers
+
+
+class _FakeWebSocket:
+    """Minimal stand-in for a FastAPI WebSocket, used to drive ws_pings
+    directly (bypassing a real socket) so we can force a specific exception
+    out of receive_text()."""
+
+    def __init__(self, receive_exc: Exception):
+        self._receive_exc = receive_exc
+
+    async def accept(self) -> None:
+        pass
+
+    async def receive_text(self) -> str:
+        raise self._receive_exc
 
 _TS = 9_999_999_999_999  # far-future score so ZREVRANGE always returns it first
 _ADDR_STATE = "192.0.2.210"
@@ -131,6 +150,26 @@ def test_websocket_receives_enveloped_node_event(client: TestClient) -> None:
 
     assert received["channel"] == channel
     assert json.loads(received["data"]) == json.loads(payload)
+
+
+def test_ws_pings_cleans_up_on_clean_disconnect() -> None:
+    """A normal client disconnect (WebSocketDisconnect) must still be
+    swallowed silently and remove the socket from broadcaster.connections,
+    matching today's behavior."""
+    ws = _FakeWebSocket(WebSocketDisconnect())
+    asyncio.run(ws_pings(ws))  # type: ignore[arg-type]
+    assert ws not in broadcaster.connections
+
+
+def test_ws_pings_cleans_up_on_any_other_exception() -> None:
+    """A non-WebSocketDisconnect exception on the receive loop (e.g. a
+    lower-level connection error) must still remove the socket from
+    broadcaster.connections instead of leaking a stale entry that would
+    otherwise keep receiving -- and duplicating -- future broadcasts."""
+    ws = _FakeWebSocket(RuntimeError("boom"))
+    with pytest.raises(RuntimeError):
+        asyncio.run(ws_pings(ws))  # type: ignore[arg-type]
+    assert ws not in broadcaster.connections
 
 
 def test_no_token_returns_401(client: TestClient) -> None:

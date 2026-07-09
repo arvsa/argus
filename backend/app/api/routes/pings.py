@@ -60,6 +60,13 @@ async def ws_pings(ws: WebSocket):
             # we don't expect meaningful client messages; keepalive from client is ok
             await ws.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
+        # Always deregister, not just on a clean WebSocketDisconnect --
+        # any other exception on the receive loop must still drop this
+        # socket from broadcaster.connections, or a stale entry can keep
+        # receiving (and duplicating) future broadcasts to a reconnecting
+        # client.
         broadcaster.disconnect(ws)
 
 
