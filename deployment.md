@@ -187,7 +187,7 @@ You can set several other environment variables:
 * `MYSQL_PORT`: The port of the MySQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
 * `MYSQL_DATABASE`: The database name to use for this application. You can leave the default of `argus`.
 * `SENTRY_DSN`: The DSN for Sentry, if you are using it.
-* `DOCKER_IMAGE_BACKEND` / `DOCKER_IMAGE_PINGSVC`: image names used to build/tag the backend and pingsvc images.
+* `DOCKER_IMAGE_BACKEND` / `DOCKER_IMAGE_PINGSVC` / `DOCKER_IMAGE_FRONTEND`: image names used to build/tag the backend, pingsvc, and frontend images.
 
 See [Multi-zone configuration](#multi-zone-configuration) below for the additional `ARGUS_*`/`S3_*` variables used by an `argus-client` zone or a central `argus-server`.
 
@@ -340,7 +340,7 @@ The current GitHub Actions workflows expect these secrets:
 * `SECRET_KEY`
 * `SENTRY_DSN`
 * `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
-* `DOCKER_IMAGE_BACKEND`, `DOCKER_IMAGE_PINGSVC`
+* `DOCKER_IMAGE_BACKEND`, `DOCKER_IMAGE_PINGSVC`, `DOCKER_IMAGE_FRONTEND`
 * `LATEST_CHANGES` — used by the separate `latest-changes` workflow, not deploy
 * `SMOKESHOW_AUTH_KEY` — used by the separate `smokeshow` coverage-publishing workflow, not deploy
 

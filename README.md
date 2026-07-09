@@ -51,7 +51,7 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
 | **adminer** | Database web UI |
-| **frontend** | React + Vite + TypeScript operator dashboard. Not containerized -- run it locally with `npm` against the Docker-composed backend (see Quick Start below). |
+| **frontend** | React + Vite + TypeScript operator dashboard. Runs in Docker (dev target, hot reload) or locally via `npm` -- see Quick Start below. |
 
 ## Quick Start
 
@@ -61,23 +61,14 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 # 1. Copy and configure environment
 cp .env.example .env          # then edit .env with your secrets
 
-# 2. Generate ping targets BEFORE starting Docker
-#    (must exist as a file before docker compose runs, or Docker creates a directory there)
-./pingsvc/generate_targets.sh
-
-# 3. Start the backend stack
-docker compose watch backend
-
-# 4. Start the ping service (separate step, requires targets.txt from step 2)
-docker compose up pingsvc -d
-
-# 5. Run the frontend dashboard (separate terminal, not containerized)
-cd frontend
-npm install
-npm run dev
+# 2. Bring up the right stack for this machine's role
+./scripts/run.sh client       # a zone: backend + redis + pingsvc + frontend
+# ./scripts/run.sh server     # central argus-server: backend + frontend only
 ```
 
-> **Note (Apple Silicon):** The Dockerfile is multi-platform and builds natively for ARM64. No extra flags needed.
+`scripts/run.sh client` generates `pingsvc/targets.txt` automatically if it doesn't exist yet. `server` mode never starts `redis`/`pingsvc` at all (a central argus-server has no local devices to ping) -- see [Environment Variables](#environment-variables) for what `ROLE` controls, and note that tearing a `client` stack back down needs the same profile flag: `docker compose --profile client down`.
+
+> **Note (Apple Silicon):** The Dockerfiles are multi-platform and build natively for ARM64. No extra flags needed.
 
 Local URLs once running:
 
@@ -85,11 +76,25 @@ Local URLs once running:
 - Backend API: http://localhost:8000
 - API docs (Swagger): http://localhost:8000/docs
 - Adminer (DB UI): http://localhost:8080
-- pingsvc Prometheus metrics: http://localhost:9090/metrics
+- pingsvc Prometheus metrics: http://localhost:9090/metrics (client mode only)
 
-The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`). The Vite dev server proxies `/api` to `http://localhost:8000`, so no extra frontend config is needed against a local stack.
+The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`).
 
-This brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
+`client` mode brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
+
+<details>
+<summary>Manual step-by-step (without scripts/run.sh)</summary>
+
+```bash
+# Generate ping targets BEFORE starting Docker
+./pingsvc/generate_targets.sh
+
+# Start everything except redis/pingsvc (server), or add --profile client for a full zone
+docker compose watch backend        # backend + frontend + db + adminer
+docker compose --profile client up pingsvc -d   # add the ping pipeline (client only)
+```
+
+</details>
 
 ## Environment Variables
 
@@ -105,6 +110,7 @@ All config is in `.env` (root); `.env.example` documents every variable, includi
 | `FIRST_SUPERUSER` | Admin email created on first startup |
 | `FIRST_SUPERUSER_PASSWORD` | Admin password — change before deploying |
 | `ENVIRONMENT` | `local` / `staging` / `production` |
+| `ROLE` | Backend role: `client` (default, a zone's local API + ping pipeline) / `server` (central argus-server, no local devices). Set automatically by `scripts/run.sh client\|server`. |
 | `ARGUS_ROLE` | pingsvc's role: `pingsvc` (ping only, default) / `exporter` / `both` (full `argus-client`) |
 | `S3_BUCKET` | Set on the backend to enable `argus-server` ingestion; unset = plain zone backend |
 
@@ -123,7 +129,7 @@ Devices, rooms, and buildings can additionally be organized into an arbitrary-de
 
 ## Frontend
 
-The dashboard (`frontend/`) is a standalone Vite app, run with `npm` rather than Docker:
+The dashboard (`frontend/`) is a Vite app. `scripts/run.sh`/`docker compose` runs it in a container by default (`frontend/Dockerfile`'s `dev` target: hot reload, source bind-mounted from the host), or run it locally with `npm` instead:
 
 ```bash
 cd frontend
@@ -134,7 +140,7 @@ npm run build    # tsc --build + production build
 npm run lint     # oxlint
 ```
 
-It expects a running backend (via `docker compose`, see Quick Start) to talk to -- there's no mock/offline mode.
+It expects a running backend (via `docker compose`, see Quick Start) to talk to -- there's no mock/offline mode. `frontend/Dockerfile` also has a `prod` target (multi-stage build served by nginx, proxying `/api` to the `backend` service) for non-dev deployments.
 
 ## Database Migrations
 

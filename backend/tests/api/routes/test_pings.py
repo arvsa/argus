@@ -5,6 +5,7 @@ Requires a live Redis (runs inside Docker via `docker compose exec backend pytes
 /state and /state_scan require a superuser token in this backend version.
 All tests seed and clean up their own Redis keys.
 """
+
 import concurrent.futures
 import json
 
@@ -70,7 +71,9 @@ def test_state_scan_returns_seeded_device(client: TestClient) -> None:
             if cursor == 0:
                 break
 
-        assert found, f"{_ADDR_STATE} not found in /state_scan after full cursor traversal"
+        assert found, (
+            f"{_ADDR_STATE} not found in /state_scan after full cursor traversal"
+        )
     finally:
         rc.hdel("pings:state", _ADDR_STATE)
 
@@ -130,18 +133,23 @@ def test_websocket_receives_enveloped_node_event(client: TestClient) -> None:
     assert json.loads(received["data"]) == json.loads(payload)
 
 
-def test_no_token_returns_401_or_403(client: TestClient) -> None:
+def test_no_token_returns_401(client: TestClient) -> None:
     """Requests to protected endpoints without a token must be rejected."""
     r = client.get(f"{settings.API_V1_STR}/users/")
-    assert r.status_code in (401, 403), (
-        f"Expected 401 or 403, got {r.status_code}"
-    )
+    assert r.status_code == 401, f"Expected 401, got {r.status_code}"
 
 
-def test_forged_token_returns_403(client: TestClient) -> None:
-    """A syntactically valid but unsigned JWT must be rejected."""
+def test_forged_token_returns_401(client: TestClient) -> None:
+    """A syntactically valid but unsigned/malformed JWT must be rejected with
+    401 (not authenticated), never 403 -- 403 is reserved for a *valid* token
+    that's merely missing a required privilege (see
+    get_current_active_superuser). Conflating the two under one status code
+    made it impossible for a client to tell "your session is dead, log in
+    again" apart from "you're logged in but not allowed to do this" without
+    resorting to string-matching the error detail (see
+    frontend/src/api/client.ts's interceptor)."""
     r = client.get(
         f"{settings.API_V1_STR}/users/",
         headers={"Authorization": "Bearer not.a.real.token"},
     )
-    assert r.status_code == 403, f"Expected 403, got {r.status_code}"
+    assert r.status_code == 401, f"Expected 401, got {r.status_code}"
