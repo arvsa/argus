@@ -28,12 +28,16 @@ def load_hierarchy_config(path: Path) -> tuple[str, list[str]]:
     return tenant_id, levels
 
 
-def seed_hierarchy(*, session: Session, tenant_id: str, levels: list[str]) -> list[NodeType]:
+def seed_hierarchy(
+    *, session: Session, tenant_id: str, levels: list[str]
+) -> list[NodeType]:
     """Idempotently upsert NodeType rows for tenant_id from an ordered level
     name list (rank = list index, root-first). Raises HierarchyDriftError if
     an existing rank would be renamed or removed."""
     existing = session.exec(
-        select(NodeType).where(NodeType.tenant_id == tenant_id).order_by(col(NodeType.rank))
+        select(NodeType)
+        .where(NodeType.tenant_id == tenant_id)
+        .order_by(col(NodeType.rank))
     ).all()
     existing_by_rank = {nt.rank: nt for nt in existing}
 
@@ -71,8 +75,15 @@ def seed_hierarchy(*, session: Session, tenant_id: str, levels: list[str]) -> li
 
 
 def run(config_path: Path) -> None:
-    if not config_path.exists():
-        logger.info("no hierarchy config at %s, skipping hierarchy seeding", config_path)
+    # is_file(), not exists(): Docker auto-creates a missing bind-mount
+    # source as an empty *directory* rather than erroring (the same
+    # footgun already hit and fixed for pingsvc/targets.txt) -- an
+    # operator who never copied hierarchy.yaml.example into place must
+    # get a graceful skip here, not a crashing prestart.
+    if not config_path.is_file():
+        logger.info(
+            "no hierarchy config at %s, skipping hierarchy seeding", config_path
+        )
         return
 
     tenant_id, levels = load_hierarchy_config(config_path)

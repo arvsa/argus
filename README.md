@@ -125,7 +125,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 The **backend** subscribes to Redis on startup and fans incoming events out to all connected WebSocket clients at `/ws/pings`. The current snapshot of all device states is also queryable via REST at `/state` and `/state_scan`. If `S3_BUCKET` is configured, the backend additionally runs a background ingestion task that polls that bucket, verifies each snapshot's signature against a registered per-zone key, and upserts the results into `ClientSnapshot`/`ZoneSummary` — queryable at `GET /api/v1/zones/summary`, including a computed `is_stale` flag for zones that have stopped pushing.
 
-Devices, rooms, and buildings can additionally be organized into an arbitrary-depth, per-tenant hierarchy (`Node`/`NodeType`, `/api/v1/nodes`, `/api/v1/node-types`) instead of the fixed Campus→Building→Room→Device chain, configurable per zone via a `hierarchy.yaml` file loaded at startup.
+Devices can additionally be organized into an arbitrary-depth, per-tenant hierarchy (`Node`/`NodeType`, `/api/v1/nodes`, `/api/v1/node-types`, `/api/v1/devices`) instead of a flat target list — see **[hierarchy.md](hierarchy.md)** for the full walkthrough: defining the shape (`hierarchy.yaml` or the frontend), creating Nodes, assigning devices, and pushing that assignment into pingsvc's target file.
 
 ## Frontend
 

@@ -17,12 +17,15 @@ from tests.utils.utils import random_lower_string
 def _write_config(tmp_path: Path, tenant_id: str, levels: list[str]) -> Path:
     path = tmp_path / "hierarchy.yaml"
     path.write_text(
-        yaml.safe_dump({"tenant_id": tenant_id, "levels": [{"name": n} for n in levels]})
+        yaml.safe_dump(
+            {"tenant_id": tenant_id, "levels": [{"name": n} for n in levels]}
+        )
     )
     return path
 
 
 # ── load_hierarchy_config ────────────────────────────────────────────────
+
 
 def test_load_hierarchy_config_parses_yaml(tmp_path: Path) -> None:
     path = _write_config(tmp_path, "acme-corp", ["Region", "Site", "Rack"])
@@ -32,6 +35,7 @@ def test_load_hierarchy_config_parses_yaml(tmp_path: Path) -> None:
 
 
 # ── seed_hierarchy (idempotent upsert + drift detection) ────────────────
+
 
 def test_seed_hierarchy_creates_node_types_in_rank_order(db: Session) -> None:
     tenant_id = random_lower_string()
@@ -47,14 +51,16 @@ def test_seed_hierarchy_creates_node_types_in_rank_order(db: Session) -> None:
 
 def test_seed_hierarchy_is_idempotent(db: Session) -> None:
     tenant_id = random_lower_string()
-    first = seed_hierarchy(session=db, tenant_id=tenant_id, levels=["Campus", "Building"])
-    second = seed_hierarchy(session=db, tenant_id=tenant_id, levels=["Campus", "Building"])
+    first = seed_hierarchy(
+        session=db, tenant_id=tenant_id, levels=["Campus", "Building"]
+    )
+    second = seed_hierarchy(
+        session=db, tenant_id=tenant_id, levels=["Campus", "Building"]
+    )
 
     assert [nt.id for nt in first] == [nt.id for nt in second]
 
-    count = db.exec(
-        select(NodeType).where(NodeType.tenant_id == tenant_id)
-    ).all()
+    count = db.exec(select(NodeType).where(NodeType.tenant_id == tenant_id)).all()
     assert len(count) == 2
 
 
@@ -68,7 +74,9 @@ def test_seed_hierarchy_rename_raises_drift_error(db: Session) -> None:
 
 def test_seed_hierarchy_removal_raises_drift_error(db: Session) -> None:
     tenant_id = random_lower_string()
-    seed_hierarchy(session=db, tenant_id=tenant_id, levels=["Campus", "Building", "Room"])
+    seed_hierarchy(
+        session=db, tenant_id=tenant_id, levels=["Campus", "Building", "Room"]
+    )
 
     with pytest.raises(HierarchyDriftError):
         seed_hierarchy(session=db, tenant_id=tenant_id, levels=["Campus", "Building"])
@@ -86,9 +94,20 @@ def test_seed_hierarchy_extending_with_new_level_is_allowed(db: Session) -> None
 
 # ── run() (prestart entrypoint) ───────────────────────────────────────────
 
+
 def test_run_skips_silently_when_config_file_missing(tmp_path: Path) -> None:
     missing = tmp_path / "does-not-exist.yaml"
     run(missing)  # must not raise
+
+
+def test_run_skips_silently_when_config_path_is_a_directory(tmp_path: Path) -> None:
+    """Docker auto-creates a missing bind-mount source as an empty
+    directory rather than erroring (the same footgun already hit and fixed
+    for pingsvc/targets.txt) -- an operator who never copied
+    hierarchy.yaml.example into place must not get a crashing prestart."""
+    accidental_dir = tmp_path / "hierarchy.yaml"
+    accidental_dir.mkdir()
+    run(accidental_dir)  # must not raise
 
 
 def test_run_seeds_from_config_file(tmp_path: Path, db: Session) -> None:
