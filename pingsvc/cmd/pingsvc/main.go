@@ -146,6 +146,81 @@ end
 return 1
 `
 
+// reconcileRemovedTargetScript undoes a device's last-known contribution
+// to stats:node:<id> and removes its ghost entries from pings:state/
+// pings:index/state:device:<addr>. Used only for addresses that are no
+// longer in the CURRENT target list at all (the Device row was deleted,
+// or a line was hand-removed from targets.txt) -- unlike a reassignment
+// or an up/down flip, there is no future ping for these addresses that
+// could ever trigger the usual change-detection cleanup in
+// publishIfChangedAndAggregateScript, so it has to happen here instead.
+const reconcileRemovedTargetScript = `
+local addr = KEYS[1]
+local key = "state:device:" .. addr
+local combined = redis.call("GET", key)
+if not combined then
+    return 0
+end
+
+local state = combined
+local nodeIDsCSV = ""
+local sep = string.find(combined, "|", 1, true)
+if sep then
+    state = string.sub(combined, 1, sep - 1)
+    nodeIDsCSV = string.sub(combined, sep + 1)
+end
+
+for id in string.gmatch(nodeIDsCSV, "[^,]+") do
+    local statsKey = "stats:node:" .. id
+    if state == "1" then
+        redis.call("HINCRBY", statsKey, "up", -1)
+    else
+        redis.call("HINCRBY", statsKey, "down", -1)
+    end
+end
+
+redis.call("DEL", key)
+redis.call("HDEL", "pings:state", addr)
+redis.call("ZREM", "pings:index", addr)
+
+return 1
+`
+
+// loadReconcileScript loads reconcileRemovedTargetScript into Redis and
+// returns its SHA1, for use with EVALSHA.
+func loadReconcileScript(ctx context.Context, rdb redis.Cmdable) (string, error) {
+	return rdb.ScriptLoad(ctx, reconcileRemovedTargetScript).Result()
+}
+
+// reconcileRemovedTargets scans every state:device:<addr> key left over
+// from a previous run and, for any address no longer present in the
+// current target list, removes its stale contribution and ghost entries
+// via reconcileRemovedTargetScript. Meant to run once at startup, right
+// after loading the current targets file.
+func reconcileRemovedTargets(ctx context.Context, rdb redis.Cmdable, sha string, targetsByAddr map[string][]string) error {
+	var cursor uint64
+	for {
+		keys, next, err := rdb.Scan(ctx, cursor, "state:device:*", 500).Result()
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			addr := strings.TrimPrefix(key, "state:device:")
+			if _, ok := targetsByAddr[addr]; ok {
+				continue
+			}
+			if err := rdb.EvalSha(ctx, sha, []string{addr}).Err(); err != nil {
+				return err
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+	return nil
+}
+
 // Target is a ping destination plus its known ancestor chain in the
 // generalized Node hierarchy (plan/dynamic-hierarchy-multi-zone-architecture.md
 // §4.3). NodeIDs is nil for targets loaded from a plain bare-address file
@@ -390,6 +465,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to load lua script: %v", err)
 	}
+	reconcileSha, err := loadReconcileScript(ctx, rdb)
+	if err != nil {
+		log.Fatalf("failed to load reconcile lua script: %v", err)
+	}
 
 	// addr -> ancestor chain, looked up by workers when building each Event
 	// so a device's stats:node:<id> aggregation follows it from the target
@@ -397,6 +476,15 @@ func main() {
 	targetsByAddr := make(map[string][]string, len(targets))
 	for _, t := range targets {
 		targetsByAddr[t.Addr] = t.NodeIDs
+	}
+
+	// Clean up any address that's no longer in the current target list at
+	// all (its Device row was deleted, or its line was hand-removed from
+	// targets.txt) -- there's no future ping for a removed address that
+	// could otherwise correct its old stats:node:<id> contribution or its
+	// pings:state/pings:index ghost entry.
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, targetsByAddr); err != nil {
+		log.Printf("reconcile removed targets: %v", err)
 	}
 
 	// pre-seed state and index so /state returns all devices immediately
