@@ -201,6 +201,68 @@ func TestPublishAndAggregate_EmptyNodeIDsDoesNotWriteAnyNodeCounters(t *testing.
 	}
 }
 
+func TestReconcileRemovedTargets_DecrementsStatsAndCleansUpGhostEntries(t *testing.T) {
+	// A device that was assigned to a Node and down, then deleted (or
+	// hand-removed from targets.txt), is no longer in the current target
+	// list at all -- there's no future ping for it to trigger the usual
+	// change-detection cleanup, so its old stats:node contribution and its
+	// pings:state/pings:index ghost entries would otherwise never get
+	// corrected (production bug: a node kept showing "1 down" forever
+	// after the device that contributed it was deleted).
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+	reconcileSha, err := loadReconcileScript(ctx, rdb)
+	if err != nil {
+		t.Fatalf("loadReconcileScript() error = %v", err)
+	}
+
+	addr := "10.0.5.1"
+	ev := Event{Addr: addr, OK: false, TS: 1000, NodeIDs: []string{"node-301"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+	assertHashField(t, ctx, rdb, "stats:node:node-301", "down", "1")
+
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string][]string{}); err != nil {
+		t.Fatalf("reconcileRemovedTargets() error = %v", err)
+	}
+
+	assertHashField(t, ctx, rdb, "stats:node:node-301", "down", "0")
+	if _, err := rdb.Get(ctx, "state:device:"+addr).Result(); err != redis.Nil {
+		t.Errorf("state:device:%s error = %v, want redis.Nil (should be deleted)", addr, err)
+	}
+	if _, err := rdb.HGet(ctx, "pings:state", addr).Result(); err != redis.Nil {
+		t.Errorf("pings:state[%s] error = %v, want redis.Nil (should be removed)", addr, err)
+	}
+	if _, err := rdb.ZScore(ctx, "pings:index", addr).Result(); err != redis.Nil {
+		t.Errorf("pings:index[%s] error = %v, want redis.Nil (should be removed)", addr, err)
+	}
+}
+
+func TestReconcileRemovedTargets_LeavesCurrentTargetsUntouched(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+	reconcileSha, err := loadReconcileScript(ctx, rdb)
+	if err != nil {
+		t.Fatalf("loadReconcileScript() error = %v", err)
+	}
+
+	addr := "10.0.5.2"
+	ev := Event{Addr: addr, OK: false, TS: 1000, NodeIDs: []string{"node-302"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string][]string{addr: {"node-302"}}); err != nil {
+		t.Fatalf("reconcileRemovedTargets() error = %v", err)
+	}
+
+	assertHashField(t, ctx, rdb, "stats:node:node-302", "down", "1")
+	if _, err := rdb.HGet(ctx, "pings:state", addr).Result(); err != nil {
+		t.Errorf("pings:state[%s] should still exist, error = %v", addr, err)
+	}
+}
+
 // NOTE: publishIfChangedAndAggregateScript also PUBLISHes to pings:events /
 // events:node:<id> depending on which IDs are set on the event. That
 // channel-routing behavior is intentionally NOT covered here: miniredis's
