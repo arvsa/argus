@@ -238,7 +238,9 @@ def test_reassigning_actively_assigned_device_addr_still_returns_400(
     ).json()
 
     addr = "192.0.2.65"
-    client.post(f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]})
+    client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    )
 
     r = client.post(
         f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_b["id"]}
