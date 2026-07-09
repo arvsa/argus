@@ -114,6 +114,36 @@ func TestPublishAndAggregate_StateFlipPublishesAgain(t *testing.T) {
 	}
 }
 
+func TestPublishAndAggregate_NodeIDsChangeRepublishesEvenWithoutStateFlip(t *testing.T) {
+	// A device that was already down (or up) before being assigned to a
+	// Node, then reassigned via a targets.txt regenerate + pingsvc restart,
+	// has no up/down transition to report -- but stats:node:<id> for its
+	// newly-assigned ancestor chain must still get populated on the very
+	// next observation, or the Hierarchy page is stuck showing 0 up/0 down
+	// forever despite the device genuinely being down (the exact bug
+	// reported in production: state:device:<addr> only encoded up/down,
+	// so an unchanged state silently skipped the aggregation loop even
+	// though NodeIDs had changed).
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	addr := "10.0.4.1"
+	bare := Event{Addr: addr, OK: false, TS: 1000}
+	if _, err := publishAndAggregate(ctx, rdb, sha, bare); err != nil {
+		t.Fatalf("first (bare) publish error = %v", err)
+	}
+
+	assigned := Event{Addr: addr, OK: false, TS: 2000, NodeIDs: []string{"node-201"}}
+	published, err := publishAndAggregate(ctx, rdb, sha, assigned)
+	if err != nil {
+		t.Fatalf("second (assigned) publish error = %v", err)
+	}
+	if !published {
+		t.Fatalf("publishAndAggregate() published = false when NodeIDs changed with no state flip, want true")
+	}
+	assertHashField(t, ctx, rdb, "stats:node:node-201", "down", "1")
+}
+
 func TestPublishAndAggregate_NodeCountersTrackUpDown(t *testing.T) {
 	_, rdb, sha := newTestRedis(t)
 	ctx := context.Background()
