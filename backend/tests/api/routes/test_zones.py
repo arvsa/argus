@@ -115,6 +115,86 @@ def test_read_latest_zone_snapshot_requires_auth(client: TestClient) -> None:
     assert r.status_code == 401, r.text
 
 
+def test_set_zone_display_name_and_expose_in_summary(
+    client: TestClient, db: Session
+) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-named",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    headers = _su(client)
+
+    r = client.patch(
+        f"{API}/zones/{tenant_id}/zone-named",
+        headers=headers,
+        json={"display_name": "HQ Building"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["display_name"] == "HQ Building"
+
+    r = client.get(f"{API}/zones/summary", headers=headers)
+    match = next(
+        (z for z in r.json()["data"] if z["zone_id"] == "zone-named"), None
+    )
+    assert match is not None
+    assert match["display_name"] == "HQ Building"
+
+
+def test_set_zone_display_name_survives_summary_upsert(
+    client: TestClient, db: Session
+) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-keepname",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    r = client.patch(
+        f"{API}/zones/{tenant_id}/zone-keepname",
+        headers=_su(client),
+        json={"display_name": "Keep Me"},
+    )
+    assert r.status_code == 200, r.text
+
+    # A later ingest cycle upserts counts -- the operator-set name must survive.
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-keepname",
+        up_count=5, down_count=2, last_snapshot_ts=2000,
+    )
+    r = client.get(f"{API}/zones/summary", headers=_su(client))
+    match = next(
+        (z for z in r.json()["data"] if z["zone_id"] == "zone-keepname"), None
+    )
+    assert match is not None
+    assert match["display_name"] == "Keep Me"
+    assert match["up_count"] == 5
+
+
+def test_set_zone_display_name_unknown_zone_404(client: TestClient) -> None:
+    r = client.patch(
+        f"{API}/zones/{random_lower_string()}/zone-ghost",
+        headers=_su(client),
+        json={"display_name": "Ghost"},
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_set_zone_display_name_forbidden_for_normal_user(
+    client: TestClient, db: Session, normal_user_token_headers: dict[str, str]
+) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-403",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    r = client.patch(
+        f"{API}/zones/{tenant_id}/zone-403",
+        headers=normal_user_token_headers,
+        json={"display_name": "Nope"},
+    )
+    assert r.status_code == 403, r.text
+
+
 def test_register_signing_key_superuser(client: TestClient) -> None:
     tenant_id = random_lower_string()
     key_hex = "ab" * 32

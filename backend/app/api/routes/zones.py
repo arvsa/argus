@@ -15,6 +15,7 @@ from app.models import (
     ZoneSummariesPublic,
     ZoneSummary,
     ZoneSummaryPublic,
+    ZoneSummaryUpdate,
 )
 
 router = APIRouter(prefix="/zones", tags=["zones"])
@@ -66,6 +67,42 @@ def read_latest_zone_snapshot(
             detail=f"No snapshots ingested for zone '{tenant_id}/{zone_id}'",
         )
     return snapshot
+
+
+@router.patch(
+    "/{tenant_id}/{zone_id}",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=ZoneSummaryPublic,
+)
+def update_zone_summary(
+    session: SessionDep,
+    tenant_id: str,
+    zone_id: str,
+    zone_in: ZoneSummaryUpdate,
+) -> Any:
+    """
+    Set operator-facing zone metadata (display_name). Everything else on a
+    ZoneSummary is machine-derived at ingest time; this is the one field an
+    operator owns, so it survives ingest upserts.
+    """
+    summary = crud.set_zone_display_name(
+        session=session,
+        tenant_id=tenant_id,
+        zone_id=zone_id,
+        display_name=zone_in.display_name,
+    )
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No zone summary for '{tenant_id}/{zone_id}'",
+        )
+    return ZoneSummaryPublic(
+        **summary.model_dump(),
+        is_stale=is_zone_stale(
+            summary.last_pulled_at,
+            threshold_seconds=settings.STALENESS_THRESHOLD_SECONDS,
+        ),
+    )
 
 
 @router.put(

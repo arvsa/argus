@@ -228,6 +228,24 @@ def upsert_zone_summary(
     return db_obj
 
 
+def set_zone_display_name(
+    *, session: Session, tenant_id: str, zone_id: str, display_name: str | None
+) -> ZoneSummary | None:
+    """Set the operator-facing label on an existing zone summary row.
+    Returns None if the zone has never been ingested (no row to label)."""
+    statement = select(ZoneSummary).where(
+        ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == zone_id
+    )
+    existing = session.exec(statement).first()
+    if existing is None:
+        return None
+    existing.display_name = display_name
+    session.add(existing)
+    session.commit()
+    session.refresh(existing)
+    return existing
+
+
 def create_zone_signing_key(
     *, session: Session, key_create: ZoneSigningKeyCreate
 ) -> ZoneSigningKey:

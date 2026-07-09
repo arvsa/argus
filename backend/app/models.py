@@ -379,6 +379,15 @@ class ZoneSummary(ZoneSummaryBase, table=True):
         default=None,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
+    # Operator-set label for dashboards; everything else on this row is
+    # machine-derived at ingest time and overwritten every cycle, this one
+    # field is not (upsert_zone_summary never touches it).
+    display_name: str | None = Field(default=None, max_length=255)
+
+
+# PATCH body for the operator-facing zone metadata (display_name only today).
+class ZoneSummaryUpdate(SQLModel):
+    display_name: str | None = Field(default=None, max_length=255)
 
 
 class ZoneSummaryPublic(ZoneSummaryBase):
@@ -387,6 +396,7 @@ class ZoneSummaryPublic(ZoneSummaryBase):
     down_count: int
     last_snapshot_ts: int | None = None
     last_pulled_at: datetime | None = None
+    display_name: str | None = None
     is_stale: bool
 
 
