@@ -172,6 +172,24 @@ def client_snapshot_already_ingested(*, session: Session, storage_key: str) -> b
     return session.exec(statement).first() is not None
 
 
+def get_latest_client_snapshot(
+    *, session: Session, tenant_id: str, zone_id: str
+) -> ClientSnapshot | None:
+    """Newest ingested snapshot for a zone, by the payload's own snapshot_ts
+    (pingsvc's export time), not pulled_at -- ingestion order isn't guaranteed
+    to match export order when a spool backlog is flushed."""
+    statement = (
+        select(ClientSnapshot)
+        .where(
+            ClientSnapshot.tenant_id == tenant_id,
+            ClientSnapshot.zone_id == zone_id,
+        )
+        .order_by(col(ClientSnapshot.snapshot_ts).desc())
+        .limit(1)
+    )
+    return session.exec(statement).first()
+
+
 def upsert_zone_summary(
     *,
     session: Session,
