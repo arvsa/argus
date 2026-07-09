@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { NodeTree } from "@/components/NodeTree";
 import { NodeBreadcrumb } from "@/components/NodeBreadcrumb";
+import { AssignedDevices } from "@/components/AssignedDevices";
 import { PageHeader } from "@/components/PageHeader";
 import { getNodeTypes } from "@/api/nodeTypes";
 import type { Node } from "@/api/nodes";
@@ -27,6 +28,7 @@ export function NodesPage() {
             <div className="space-y-3">
               <NodeBreadcrumb pathIds={selected.path_ids} currentName={selected.name} />
               <h2 className="text-sm font-semibold text-gray-900">{selected.name}</h2>
+              <AssignedDevices nodeId={selected.id} />
             </div>
           ) : (
             <p className="text-sm text-gray-500">Select a node to see details.</p>

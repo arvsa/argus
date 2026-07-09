@@ -66,6 +66,10 @@ export const nodeNameSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
 
+export const deviceAssignmentSchema = z.object({
+  addr: z.string().min(1, "Address is required"),
+});
+
 export const createUserSchema = z.object({
   email: z.email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
@@ -97,5 +101,6 @@ export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
 export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
 export type NodeNameInput = z.infer<typeof nodeNameSchema>;
+export type DeviceAssignmentInput = z.infer<typeof deviceAssignmentSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type EditUserInput = z.infer<typeof editUserSchema>;
