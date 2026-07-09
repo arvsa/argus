@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -130,6 +131,42 @@ describe("useLiveFeed / WsIndicator / LiveFeedPanel", () => {
     );
 
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["stats"] });
+  });
+
+  it("ignores a message delivered to a stale socket after React StrictMode's double-invoke tears it down", async () => {
+    // StrictMode intentionally double-invokes effects in dev (mount ->
+    // cleanup -> mount) to surface exactly this kind of bug: a socket from
+    // the first invocation can still be alive momentarily and deliver an
+    // event after its own effect instance has already been cleaned up.
+    // Without a guard, that produces the duplicate live-feed rows seen in
+    // production (each event appended once by the stale socket and once by
+    // the real one).
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <LiveFeedProvider>
+            <LiveFeedPanel />
+          </LiveFeedProvider>
+        </QueryClientProvider>
+      </StrictMode>
+    );
+
+    expect(MockWebSocket.instances).toHaveLength(2);
+    const [stale, live] = MockWebSocket.instances;
+
+    const message = {
+      data: JSON.stringify({
+        channel: "pings:events",
+        data: JSON.stringify({ addr: "10.1.0.3", ok: false, ts: 1, interval_ms: 5000 }),
+      }),
+    };
+
+    act(() => live.onmessage?.(message));
+    act(() => stale.onmessage?.(message));
+
+    await screen.findByText("10.1.0.3");
+    expect(screen.getAllByText("10.1.0.3")).toHaveLength(1);
   });
 
   it("invalidates node-stats when a per-node event arrives", async () => {

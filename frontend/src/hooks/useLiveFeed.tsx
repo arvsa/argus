@@ -41,13 +41,29 @@ export function LiveFeedProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    // React 18/19 StrictMode intentionally double-invokes effects in dev
+    // (mount -> cleanup -> mount) to surface exactly this kind of bug: the
+    // first invocation's socket can still be alive momentarily and deliver
+    // an event after its own effect instance has already been torn down.
+    // `cancelled` makes every handler from this effect instance a no-op
+    // once cleanup has run, so a stale socket can never append a duplicate
+    // event into `events` again, regardless of the close's actual timing.
+    let cancelled = false;
     setStatus("connecting");
     const ws = new WebSocket(wsUrl());
 
-    ws.onopen = () => setStatus("open");
-    ws.onclose = () => setStatus("closed");
-    ws.onerror = () => setStatus("error");
+    ws.onopen = () => {
+      if (!cancelled) setStatus("open");
+    };
+    ws.onclose = () => {
+      if (!cancelled) setStatus("closed");
+    };
+    ws.onerror = () => {
+      if (!cancelled) setStatus("error");
+    };
     ws.onmessage = (ev: { data: string }) => {
+      if (cancelled) return;
+
       let envelope: { channel: string; data: string };
       try {
         envelope = JSON.parse(ev.data);
@@ -83,6 +99,7 @@ export function LiveFeedProvider({ children }: { children: ReactNode }) {
     }, KEEPALIVE_INTERVAL_MS);
 
     return () => {
+      cancelled = true;
       window.clearInterval(keepalive);
       ws.close();
     };

@@ -95,10 +95,26 @@ def read_device(session: SessionDep, _current_user: CurrentUser, id: uuid.UUID) 
 )
 def create_device(*, session: SessionDep, device_in: DeviceCreate) -> Any:
     """
-    Create a new Device.
+    Create a new Device, or reassign an orphaned one.
+
+    An addr that already exists but is orphaned (node_id is NULL, e.g.
+    because its Node was deleted -- see Device.node_id's SET NULL doc
+    comment in models.py) is reassigned to the incoming node_id rather than
+    rejected, but only when the caller is actually assigning it somewhere
+    (device_in.node_id is not None) -- otherwise a device could never be
+    re-added anywhere once its node is removed. A bare re-POST of an addr
+    that's already unassigned (no node_id either way) is still a real
+    duplicate-create attempt, and an addr that's actively assigned
+    elsewhere is still a real conflict -- both stay a 400.
     """
     existing = crud.get_device_by_addr(session=session, addr=device_in.addr)
     if existing:
+        if existing.node_id is None and device_in.node_id is not None:
+            existing.node_id = device_in.node_id
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return existing
         raise HTTPException(
             status_code=400,
             detail="A device with this address already exists.",

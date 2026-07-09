@@ -8,6 +8,7 @@ from app.api.deps import CurrentUser
 from app.core.broadcast import broadcaster
 from app.core.redis import get_sync_redis_client
 
+
 def _count_stats(redis) -> dict:
     """Scan pings:state and tally up/down counts without loading all payloads."""
     total = up = down = 0
@@ -42,10 +43,13 @@ def _node_stats(redis, ids: list[str]) -> dict[str, dict[str, int]]:
     results = pipe.execute()
     return {
         node_id: {"up": int(up or 0), "down": int(down or 0)}
-        for node_id, (up, down) in zip(ids, results)
+        for node_id, (up, down) in zip(ids, results, strict=True)
     }
 
-router = APIRouter(prefix="", tags=["ping"])  # prefix kept empty so paths are /ws/pings and /api/v1/state
+
+router = APIRouter(
+    prefix="", tags=["ping"]
+)  # prefix kept empty so paths are /ws/pings and /api/v1/state
 
 
 @router.websocket("/ws/pings")
@@ -60,6 +64,13 @@ async def ws_pings(ws: WebSocket):
             # we don't expect meaningful client messages; keepalive from client is ok
             await ws.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
+        # Always deregister, not just on a clean WebSocketDisconnect --
+        # any other exception on the receive loop must still drop this
+        # socket from broadcaster.connections, or a stale entry can keep
+        # receiving (and duplicating) future broadcasts to a reconnecting
+        # client.
         broadcaster.disconnect(ws)
 
 
@@ -71,7 +82,7 @@ def get_stats():
 
 
 @router.get("/node-stats")
-def get_node_stats(current_user: CurrentUser, ids: str = Query("")):
+def get_node_stats(_current_user: CurrentUser, ids: str = Query("")):
     """Aggregate up/down counts per Node (see plan/frontend-v2.md Phase 3d's
     NodeStatusBadge). ids is a comma-separated list of Node ids; unlike the
     public /stats, this reflects internal hierarchy structure, so it's
@@ -82,7 +93,11 @@ def get_node_stats(current_user: CurrentUser, ids: str = Query("")):
 
 
 @router.get("/state")
-def get_state(current_user: CurrentUser, page: int = Query(1, ge=1), size: int = Query(100, ge=1, le=1000)):
+def get_state(
+    _current_user: CurrentUser,
+    page: int = Query(1, ge=1),
+    size: int = Query(100, ge=1, le=1000),
+):
     """
     Offset pagination backed by a Redis sorted set index "pings:index".
     Assumes your writer does:
@@ -121,7 +136,11 @@ def get_state(current_user: CurrentUser, page: int = Query(1, ge=1), size: int =
 
 
 @router.get("/state_scan")
-def get_state_scan(current_user: CurrentUser, cursor: int = Query(0, ge=0), count: int = Query(100, ge=1, le=1000)):
+def get_state_scan(
+    _current_user: CurrentUser,
+    cursor: int = Query(0, ge=0),
+    count: int = Query(100, ge=1, le=1000),
+):
     """
     Cursor-based, HSCAN-driven pagination. Unordered and eventually-consistent.
     Returns: {"cursor": <next>, "items": [...]}
