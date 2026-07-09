@@ -66,6 +66,15 @@ export const nodeNameSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
 
+// Node creation additionally needs the NodeType to create it as -- see
+// NodeTree.tsx's NodeCreateForm, which only renders the field when there's
+// more than one candidate type for the position (root vs. child of a
+// given parent).
+export const nodeCreateSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  node_type_id: z.string().min(1, "Type is required"),
+});
+
 export const createUserSchema = z.object({
   email: z.email("Invalid email"),
   password: z.string().min(8, "Password must be at least 8 characters"),
@@ -97,5 +106,6 @@ export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
 export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
 export type NodeNameInput = z.infer<typeof nodeNameSchema>;
+export type NodeCreateInput = z.infer<typeof nodeCreateSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type EditUserInput = z.infer<typeof editUserSchema>;
