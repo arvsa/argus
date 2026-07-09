@@ -189,6 +189,63 @@ def test_delete_device_requires_superuser(
     assert r.status_code == 403
 
 
+def test_reassigning_orphaned_device_addr_succeeds(client: TestClient) -> None:
+    """POST /devices/ with an addr that already exists but is orphaned
+    (node_id is NULL, e.g. because its Node was deleted) must reassign the
+    existing row to the new node_id instead of rejecting with a 400 --
+    otherwise a device can never be re-added anywhere once its node is
+    removed."""
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "192.0.2.64"
+    device = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    ).json()
+
+    r = client.delete(f"{API}/nodes/{node_a['id']}", headers=headers)
+    assert r.status_code == 200, r.text
+
+    r = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_b["id"]}
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["id"] == device["id"]
+    assert data["node_id"] == node_b["id"]
+
+
+def test_reassigning_actively_assigned_device_addr_still_returns_400(
+    client: TestClient,
+) -> None:
+    """The orphaned-reassignment path must not weaken the existing conflict
+    check: an addr that's still actively assigned to a node stays a 400."""
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "192.0.2.65"
+    client.post(f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]})
+
+    r = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_b["id"]}
+    )
+    assert r.status_code == 400, r.text
+
+
 def test_deleting_node_sets_device_node_id_to_null(client: TestClient) -> None:
     """A Device's node assignment must be orphaned (node_id -> NULL), not
     cascade-deleted, when its Node is removed -- the device record itself
