@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import (
+    devices,
     login,
     node_types,
     nodes,
@@ -11,6 +12,7 @@ from app.api.routes import (
     zones,
 )
 from app.core.config import settings
+
 
 def build_api_router(role: str) -> APIRouter:
     """`pings.router` (/ws/pings, /stats, /state, /state_scan) is only
@@ -27,6 +29,7 @@ def build_api_router(role: str) -> APIRouter:
     router.include_router(zones.router)
     router.include_router(node_types.router)
     router.include_router(nodes.router)
+    router.include_router(devices.router)
 
     if settings.ENVIRONMENT == "local":
         router.include_router(private.router)
