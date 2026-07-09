@@ -13,18 +13,10 @@ import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { NodesPage } from "@/pages/hierarchy/Nodes";
 import { DevicesPage } from "@/pages/Devices";
 import { ZonesPage } from "@/pages/Zones";
+import { UsersPage } from "@/pages/admin/Users";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
-
-function ComingSoon({ title }: { title: string }) {
-  return (
-    <div>
-      <h1 className="text-xl font-semibold text-gray-900">{title}</h1>
-      <p className="mt-2 text-sm text-gray-500">Coming soon.</p>
-    </div>
-  );
-}
 
 export default function App() {
   return (
@@ -44,7 +36,7 @@ export default function App() {
               <Route path="/hierarchy" element={<NodesPage />} />
               <Route element={<RequireSuperuser />}>
                 <Route path="/hierarchy/types" element={<NodeTypesPage />} />
-                <Route path="/admin/users" element={<ComingSoon title="Users" />} />
+                <Route path="/admin/users" element={<UsersPage />} />
               </Route>
               <Route path="/devices" element={<DevicesPage />} />
               <Route path="/zones" element={<ZonesPage />} />
