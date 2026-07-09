@@ -397,9 +397,8 @@ class ZoneSummariesPublic(SQLModel):
 
 # A zone's registered ed25519 public key (plan §4.4: "a real deployment
 # verifies against a public key registered out-of-band," not one carried in
-# the manifest itself). Registering/rotating this is an ops action -- no
-# HTTP route yet, only the crud functions an ingestion job or future admin
-# tool needs.
+# the manifest itself). Registered/rotated by a superuser via
+# PUT /zones/{tenant_id}/{zone_id}/signing-key.
 class ZoneSigningKeyBase(SQLModel):
     tenant_id: str = Field(max_length=255, index=True)
     zone_id: str = Field(max_length=255, index=True)
@@ -410,6 +409,12 @@ class ZoneSigningKeyBase(SQLModel):
 
 class ZoneSigningKeyCreate(ZoneSigningKeyBase):
     pass
+
+
+# Request body for the signing-key route: tenant/zone come from the path,
+# so only the key itself is in the body.
+class ZoneSigningKeyRegister(SQLModel):
+    public_key_hex: str = Field(max_length=64)
 
 
 class ZoneSigningKey(ZoneSigningKeyBase, table=True):
@@ -425,3 +430,10 @@ class ZoneSigningKey(ZoneSigningKeyBase, table=True):
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
+
+
+# Only ever exposes the public half -- there is nothing secret in this
+# model, the private key never leaves the zone's pingsvc host.
+class ZoneSigningKeyPublic(ZoneSigningKeyBase):
+    id: uuid.UUID
+    created_at: datetime | None = None
