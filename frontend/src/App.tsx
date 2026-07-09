@@ -12,6 +12,7 @@ import { Profile } from "@/pages/Profile";
 import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { NodesPage } from "@/pages/hierarchy/Nodes";
 import { DevicesPage } from "@/pages/Devices";
+import { ZonesPage } from "@/pages/Zones";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -46,7 +47,7 @@ export default function App() {
                 <Route path="/admin/users" element={<ComingSoon title="Users" />} />
               </Route>
               <Route path="/devices" element={<DevicesPage />} />
-              <Route path="/zones" element={<ComingSoon title="Zones" />} />
+              <Route path="/zones" element={<ZonesPage />} />
               <Route path="/profile" element={<Profile />} />
             </Route>
           </Route>
