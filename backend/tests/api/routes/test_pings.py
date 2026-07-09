@@ -35,6 +35,7 @@ class _FakeWebSocket:
     async def receive_text(self) -> str:
         raise self._receive_exc
 
+
 _TS = 9_999_999_999_999  # far-future score so ZREVRANGE always returns it first
 _ADDR_STATE = "192.0.2.210"
 
