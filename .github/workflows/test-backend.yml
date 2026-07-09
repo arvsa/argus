@@ -26,6 +26,7 @@ jobs:
       FRONTEND_HOST: http://localhost:5173
       DOCKER_IMAGE_BACKEND: argus-backend
       DOCKER_IMAGE_PINGSVC: argus-pingsvc
+      DOCKER_IMAGE_FRONTEND: argus-frontend
       REDIS_URL: redis://localhost:6379/0
       EMAILS_FROM_EMAIL: noreply@example.com
     steps:
@@ -49,6 +50,7 @@ jobs:
           FRONTEND_HOST=http://localhost:5173
           DOCKER_IMAGE_BACKEND=argus-backend
           DOCKER_IMAGE_PINGSVC=argus-pingsvc
+          DOCKER_IMAGE_FRONTEND=argus-frontend
           REDIS_URL=redis://localhost:6379/0
           EMAILS_FROM_EMAIL=noreply@example.com
           EOF

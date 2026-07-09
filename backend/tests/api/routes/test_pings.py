@@ -5,6 +5,7 @@ Requires a live Redis (runs inside Docker via `docker compose exec backend pytes
 /state and /state_scan require a superuser token in this backend version.
 All tests seed and clean up their own Redis keys.
 """
+
 import concurrent.futures
 import json
 
@@ -70,7 +71,9 @@ def test_state_scan_returns_seeded_device(client: TestClient) -> None:
             if cursor == 0:
                 break
 
-        assert found, f"{_ADDR_STATE} not found in /state_scan after full cursor traversal"
+        assert found, (
+            f"{_ADDR_STATE} not found in /state_scan after full cursor traversal"
+        )
     finally:
         rc.hdel("pings:state", _ADDR_STATE)
 

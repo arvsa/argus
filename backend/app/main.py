@@ -1,6 +1,7 @@
 import asyncio
+from collections.abc import Awaitable
 from contextlib import asynccontextmanager
-from typing import Awaitable, cast
+from typing import cast
 
 import sentry_sdk
 from fastapi import FastAPI
@@ -28,7 +29,7 @@ if settings.SENTRY_DSN and settings.ENVIRONMENT != "local":
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_app: FastAPI):
     # Redis/WS ping pipeline: only relevant for a role=client instance with a
     # local pingsvc to listen to. A role=server instance has no local
     # devices, so it must never create Redis clients or block on the
@@ -85,7 +86,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # shutdown: stop listener and close clients
-    if stop_event is not None:
+    if stop_event is not None and listener_task is not None:
         stop_event.set()
         try:
             await listener_task
@@ -97,7 +98,7 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
-    if ingestion_bg_task is not None:
+    if ingestion_stop_event is not None and ingestion_bg_task is not None:
         ingestion_stop_event.set()
         try:
             await ingestion_bg_task
