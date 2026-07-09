@@ -12,6 +12,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 COUNT=${1:-20000}
 OUT=${2:-"$SCRIPT_DIR/targets.txt"}
+
+# Docker auto-creates a missing bind-mount source as an empty directory
+# rather than erroring (e.g. if `docker compose up` ran before this
+# script) -- self-heal that specific, always-safe case instead of failing
+# with a cryptic "Is a directory" on the write below.
+if [ -d "$OUT" ]; then
+  if [ -z "$(ls -A "$OUT" 2>/dev/null)" ]; then
+    echo "Removing empty directory at $OUT (likely auto-created by a Docker bind mount before this script ran)"
+    rmdir "$OUT"
+  else
+    echo "ERROR: $OUT is a non-empty directory, refusing to overwrite. Remove it manually and re-run." >&2
+    exit 1
+  fi
+fi
+
 > "$OUT"
 
 # First use 10.0.0.0/8 (skip network and broadcast-like trivial hosts)
