@@ -66,6 +66,27 @@ export const nodeNameSchema = z.object({
   name: z.string().min(1, "Name is required"),
 });
 
+export const createUserSchema = z.object({
+  email: z.email("Invalid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  full_name: z.string().optional(),
+  is_superuser: z.boolean().optional(),
+});
+
+// Admin edit form: password is optional here -- an empty string means
+// "leave unchanged" (validated as non-empty only if actually provided),
+// since PATCH /users/{id} treats every field as optional.
+export const editUserSchema = z.object({
+  email: z.email("Invalid email").optional(),
+  full_name: z.string().optional(),
+  is_superuser: z.boolean().optional(),
+  admission_status: z.enum(["pending", "approved", "rejected"]),
+  password: z
+    .string()
+    .refine((v) => v === "" || v.length >= 8, "Must be at least 8 characters")
+    .optional(),
+});
+
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
@@ -76,3 +97,5 @@ export type FirstNodeTypeInput = z.infer<typeof firstNodeTypeSchema>;
 export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
 export type NodeNameInput = z.infer<typeof nodeNameSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type EditUserInput = z.infer<typeof editUserSchema>;

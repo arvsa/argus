@@ -11,6 +11,34 @@ export const getUsers = async () => {
   return res.data;
 };
 
+export const createUser = async (data: {
+  email: string;
+  password: string;
+  full_name?: string;
+  is_superuser?: boolean;
+}) => {
+  const res = await client.post<User>("/users/", data);
+  return res.data;
+};
+
+export const updateUser = async (
+  id: string,
+  data: Partial<{
+    email: string;
+    full_name: string;
+    is_superuser: boolean;
+    admission_status: string;
+    password: string;
+  }>
+) => {
+  const res = await client.patch<User>(`/users/${id}`, data);
+  return res.data;
+};
+
+export const deleteUser = async (id: string) => {
+  await client.delete(`/users/${id}`);
+};
+
 export const updateMe = async (data: { full_name?: string; email?: string }) => {
   const res = await client.patch<User>("/users/me", data);
   return res.data;
