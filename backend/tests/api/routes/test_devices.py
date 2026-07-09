@@ -34,6 +34,35 @@ def _root_node(client: TestClient, headers: dict[str, str], node_type_id: str) -
     ).json()
 
 
+def _child_type(
+    client: TestClient, headers: dict[str, str], tenant_id: str, parent_type_id: str
+) -> dict:
+    return client.post(
+        f"{API}/node-types/",
+        headers=headers,
+        json={
+            "tenant_id": tenant_id,
+            "name": "Site",
+            "rank": 1,
+            "parent_type_id": parent_type_id,
+        },
+    ).json()
+
+
+def _child_node(
+    client: TestClient, headers: dict[str, str], node_type_id: str, parent_id: str
+) -> dict:
+    return client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={
+            "name": "Main Site",
+            "node_type_id": node_type_id,
+            "parent_id": parent_id,
+        },
+    ).json()
+
+
 def test_create_device_without_node(client: TestClient) -> None:
     headers = _su(client)
     addr = f"10.0.0.{random_lower_string()[:1]}"
@@ -209,3 +238,48 @@ def test_deleting_node_sets_device_node_id_to_null(client: TestClient) -> None:
     r = client.get(f"{API}/devices/{device['id']}", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json()["node_id"] is None
+
+
+def test_targets_export_format(client: TestClient) -> None:
+    """GET /devices/targets-export must produce pingsvc's exact
+    "addr,ancestor1;ancestor2;..." format (see
+    pingsvc/cmd/pingsvc/main.go's parseTargetLine): root-first ancestors
+    from Node.path_ids, then the assigned node itself last."""
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    child_type = _child_type(client, headers, tenant_id, root_type["id"])
+    root = _root_node(client, headers, root_type["id"])
+    child = _child_node(client, headers, child_type["id"], root["id"])
+
+    client.post(
+        f"{API}/devices/",
+        headers=headers,
+        json={"addr": "203.0.113.10", "node_id": child["id"]},
+    )
+    client.post(f"{API}/devices/", headers=headers, json={"addr": "203.0.113.11"})
+
+    r = client.get(f"{API}/devices/targets-export", headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"].startswith("text/plain")
+
+    lines = r.text.strip("\n").split("\n")
+    assert f"203.0.113.10,{root['id']};{child['id']}" in lines
+    assert "203.0.113.11" in lines
+
+
+def test_targets_export_requires_superuser(
+    client: TestClient, normal_user_token_headers: dict[str, str]
+) -> None:
+    r = client.get(f"{API}/devices/targets-export", headers=normal_user_token_headers)
+    assert r.status_code == 403
+
+
+def test_targets_export_succeeds_regardless_of_device_count(client: TestClient) -> None:
+    """Smoke test the endpoint in isolation (other tests in this module
+    don't clean up their devices, so this can't assert an empty body) --
+    it must never 404/500, including on a fresh deployment with zero
+    devices."""
+    headers = _su(client)
+    r = client.get(f"{API}/devices/targets-export", headers=headers)
+    assert r.status_code == 200, r.text
