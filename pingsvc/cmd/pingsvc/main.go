@@ -49,6 +49,17 @@ func nowMs() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 // chain gets its own stats:node:<id> counter and events:node:<id> publish.
 // If that produced no publish (empty nodeIDs), the event falls back to the
 // generic pings:events channel.
+// state:device:<addr> encodes "<newState>|<nodeIDsCSV>", not just the
+// up/down bit -- a device reassigned to a different Node (or newly
+// assigned from unassigned) needs a fresh aggregation pass into its
+// (possibly new) ancestor chain even when its up/down status hasn't
+// itself changed, otherwise stats:node:<id> for the new chain silently
+// never gets populated (production bug: a device already down before
+// being assigned stayed down after assignment, so no state flip ever
+// occurred, and the Hierarchy page stayed stuck at 0 up/0 down). Values
+// written by older pingsvc versions have no "|" separator; those are
+// treated as state-only with an empty prior node chain, which migrates
+// them correctly on their very next observation.
 const publishIfChangedAndAggregateScript = `
 local addr = KEYS[1]
 local newState = ARGV[1]
@@ -57,39 +68,75 @@ local ts = tonumber(ARGV[3])
 local nodeIDsCSV = ARGV[4]
 
 local key = "state:device:" .. addr
-local oldState = redis.call("GET", key)
-if oldState == newState then
+local oldCombined = redis.call("GET", key)
+local newCombined = newState .. "|" .. nodeIDsCSV
+if oldCombined == newCombined then
     return 0
 end
 
--- update device state
-redis.call("SET", key, newState)
+local oldState = nil
+local oldNodeIDsCSV = ""
+if oldCombined then
+    local sep = string.find(oldCombined, "|", 1, true)
+    if sep then
+        oldState = string.sub(oldCombined, 1, sep - 1)
+        oldNodeIDsCSV = string.sub(oldCombined, sep + 1)
+    else
+        oldState = oldCombined
+    end
+end
+
+-- update device state (now state + node chain together)
+redis.call("SET", key, newCombined)
 
 -- update snapshot and sorted index
 redis.call("HSET", "pings:state", addr, payload)
 redis.call("ZADD", "pings:index", ts, addr)
 
+local oldNodeSet = {}
+for id in string.gmatch(oldNodeIDsCSV, "[^,]+") do
+    oldNodeSet[id] = true
+end
+
+local newNodeSet = {}
 local published = false
 
-local function bumpCounter(statsKey)
+-- generalized per-node aggregation: one counter + channel per ancestor.
+-- Only decrement the old bucket at a node the device was ALREADY counted
+-- at (same node in both the old and new chain) -- a newly-assigned node
+-- has nothing to decrement, it's a fresh contribution.
+for nodeID in string.gmatch(nodeIDsCSV, "[^,]+") do
+    newNodeSet[nodeID] = true
+    local statsKey = "stats:node:" .. nodeID
     if newState == "1" then
         redis.call("HINCRBY", statsKey, "up", 1)
-        if oldState == "0" then
+        if oldNodeSet[nodeID] and oldState == "0" then
             redis.call("HINCRBY", statsKey, "down", -1)
         end
     else
         redis.call("HINCRBY", statsKey, "down", 1)
-        if oldState == "1" then
+        if oldNodeSet[nodeID] and oldState == "1" then
             redis.call("HINCRBY", statsKey, "up", -1)
         end
     end
-end
-
--- generalized per-node aggregation: one counter + channel per ancestor
-for nodeID in string.gmatch(nodeIDsCSV, "[^,]+") do
-    bumpCounter("stats:node:" .. nodeID)
     redis.call("PUBLISH", "events:node:" .. nodeID, payload)
     published = true
+end
+
+-- Nodes the device used to report into but no longer does (reassigned
+-- elsewhere, or unassigned) must have their old contribution removed, or
+-- the old node's counts get stuck showing a device that isn't there.
+if oldState then
+    for id in pairs(oldNodeSet) do
+        if not newNodeSet[id] then
+            local statsKey = "stats:node:" .. id
+            if oldState == "1" then
+                redis.call("HINCRBY", statsKey, "up", -1)
+            else
+                redis.call("HINCRBY", statsKey, "down", -1)
+            end
+        end
+    end
 end
 
 if not published then
