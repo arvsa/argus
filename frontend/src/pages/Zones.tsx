@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { getZoneSummaries } from "@/api/zones";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
@@ -12,6 +13,7 @@ function formatLastPulled(ts: string | null): string {
 }
 
 export function ZonesPage() {
+  const navigate = useNavigate();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["zones"],
     queryFn: getZoneSummaries,
@@ -32,6 +34,7 @@ export function ZonesPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium uppercase tracking-wide text-gray-500">
                 <tr>
+                  <th className="px-4 py-2.5">Name</th>
                   <th className="px-4 py-2.5">Tenant</th>
                   <th className="px-4 py-2.5">Zone</th>
                   <th className="px-4 py-2.5">Devices</th>
@@ -41,8 +44,15 @@ export function ZonesPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {data.data.map((zone) => (
-                  <tr key={zone.id}>
-                    <td className="px-4 py-2.5 font-medium text-gray-800">{zone.tenant_id}</td>
+                  <tr
+                    key={zone.id}
+                    onClick={() => navigate(`/zones/${zone.tenant_id}/${zone.zone_id}`)}
+                    className="cursor-pointer hover:bg-gray-50"
+                  >
+                    <td className="px-4 py-2.5 font-medium text-gray-800">
+                      {zone.display_name ?? <span className="text-gray-400">—</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-700">{zone.tenant_id}</td>
                     <td className="px-4 py-2.5 font-mono text-gray-700">{zone.zone_id}</td>
                     <td className="px-4 py-2.5">
                       <NodeStatusBadge up={zone.up_count} down={zone.down_count} />

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ZonesPage } from "@/pages/Zones";
 import * as zonesApi from "@/api/zones";
@@ -18,6 +19,7 @@ function zone(overrides: Partial<ZoneSummary> = {}): ZoneSummary {
     down_count: 2,
     last_snapshot_ts: 1700000000000,
     last_pulled_at: "2024-01-01T00:00:00Z",
+    display_name: null,
     is_stale: false,
     ...overrides,
   };
@@ -27,7 +29,12 @@ function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={queryClient}>
-      <ZonesPage />
+      <MemoryRouter initialEntries={["/zones"]}>
+        <Routes>
+          <Route path="/zones" element={<ZonesPage />} />
+          <Route path="/zones/:tenantId/:zoneId" element={<div>Zone Detail Stub</div>} />
+        </Routes>
+      </MemoryRouter>
     </QueryClientProvider>
   );
 }
@@ -53,6 +60,24 @@ describe("ZonesPage", () => {
     expect(screen.getByText("hq")).toBeInTheDocument();
     expect(screen.getByText("10 up")).toBeInTheDocument();
     expect(screen.getByText("2 down")).toBeInTheDocument();
+  });
+
+  it("shows the operator display name when set", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({
+      data: [zone({ display_name: "Headquarters" })],
+      count: 1,
+    });
+    renderPage();
+
+    expect(await screen.findByText("Headquarters")).toBeInTheDocument();
+  });
+
+  it("navigates to the zone detail page when a row is clicked", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [zone()], count: 1 });
+    renderPage();
+
+    fireEvent.click(await screen.findByText("hq"));
+    expect(await screen.findByText("Zone Detail Stub")).toBeInTheDocument();
   });
 
   it("shows a stale badge for a stale zone", async () => {

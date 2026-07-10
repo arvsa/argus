@@ -13,6 +13,7 @@ import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { NodesPage } from "@/pages/hierarchy/Nodes";
 import { DevicesPage } from "@/pages/Devices";
 import { ZonesPage } from "@/pages/Zones";
+import { ZoneDetailPage } from "@/pages/ZoneDetail";
 import { UsersPage } from "@/pages/admin/Users";
 import { Toaster } from "@/components/Toaster";
 
@@ -47,6 +48,7 @@ export default function App() {
                 }
               />
               <Route path="/zones" element={<ZonesPage />} />
+              <Route path="/zones/:tenantId/:zoneId" element={<ZoneDetailPage />} />
               <Route path="/profile" element={<Profile />} />
             </Route>
           </Route>
