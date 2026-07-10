@@ -188,6 +188,8 @@ You can set several other environment variables:
 * `MYSQL_DATABASE`: The database name to use for this application. You can leave the default of `argus`.
 * `SENTRY_DSN`: The DSN for Sentry, if you are using it.
 * `DOCKER_IMAGE_BACKEND` / `DOCKER_IMAGE_PINGSVC` / `DOCKER_IMAGE_FRONTEND`: image names used to build/tag the backend, pingsvc, and frontend images.
+* `FRONTEND_TARGET` / `FRONTEND_PORT`: which stage of `frontend/Dockerfile` to build and the port Traefik routes to. The defaults (`dev`/`5173`) run the hot-reload Vite server — **production deploys must set `FRONTEND_TARGET=prod` and `FRONTEND_PORT=80`** to serve the static nginx build instead.
+* `ROLE`: `client` (default, full zone stack) or `server` (central argus-server — no Redis/pingsvc; combine with omitting the `client` compose profile, see `scripts/run.sh`).
 
 See [Multi-zone configuration](#multi-zone-configuration) below for the additional `ARGUS_*`/`S3_*` variables used by an `argus-client` zone or a central `argus-server`.
 
@@ -224,7 +226,7 @@ Set on the `pingsvc` service (directly, or via secrets referenced in its `enviro
 | `ARGUS_ZONE_ID`, `ARGUS_TENANT_ID` | identify this zone in the object storage key layout and on the server's dashboard |
 | `ARGUS_S3_BUCKET` | the shared bucket zones push to; leave the endpoint/access-key vars unset to use real AWS S3 with the AWS SDK's default credential chain (IAM role, instance profile) rather than static keys |
 | `ARGUS_S3_ACCESS_KEY` / `ARGUS_S3_SECRET_KEY` | only needed for a static IAM user (the plan's MVP credential model) or a non-AWS S3-compatible provider; prefer an IAM role in production if your infrastructure supports it |
-| `ARGUS_SIGNING_KEY_PATH` | must point at a path on a **persistent volume** — the exporter generates this zone's Ed25519 key once and expects to reuse it forever after. A new key on every restart breaks the server's registered-key trust model entirely. |
+| `ARGUS_SIGNING_KEY_PATH` | must point at a path on a **persistent volume** — the exporter generates this zone's Ed25519 key once and expects to reuse it forever after. A new key on every restart breaks the server's registered-key trust model entirely. `compose.yml` mounts the named volume `argus-data` at `/var/lib/argus` (also home to the spool dir), so `/var/lib/argus/signing.key` is the natural choice. |
 
 Bucket/IAM provisioning itself (creating the bucket, the scoped `PutObject`-only policy for this zone's prefix) is an ops/Terraform task, not something the application does — see the plan doc's `plan/dynamic-hierarchy-multi-zone-architecture.md` §4.4 for the recommended IAM shape (one shared bucket, per-tenant/zone prefixes, a writer role restricted to its own prefix).
 
@@ -238,10 +240,11 @@ Set on the `backend` service:
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | a read-only credential (`GetObject`+`ListBucket`, no write) across all zones' prefixes — never reuse a zone's writer credential here |
 | `INGESTION_INTERVAL_SECONDS` | how often the server polls the bucket for new snapshots (default 60s) |
 | `STALENESS_THRESHOLD_SECONDS` | how long a zone can go without a successful pull before `GET /api/v1/zones/summary` reports it as stale (default 120s) |
+| `SNAPSHOT_RETENTION_DAYS` | ingested snapshots older than this are pruned each cycle, keeping each zone's newest (default 7) |
 
 A server instance doesn't need `pingsvc` running at all — it only ever reads from object storage, never talks to a zone directly.
 
-To let the server verify a zone's signed snapshots (rather than leaving `signature_verified` as `null`/unknown for everything from that zone), register that zone's Ed25519 **public** key with `crud.create_zone_signing_key` — there's no HTTP route for this yet, so it's a one-off script/shell run against the server's database, matching the walkthrough in [development.md](development.md#bonus-prove-the-signature-verification-works). Never transmit or store a zone's *private* key anywhere but that zone's own persistent volume.
+To let the server verify a zone's signed snapshots (rather than leaving `signature_verified` as `null`/unknown for everything from that zone), register that zone's Ed25519 **public** key as a superuser via `PUT /api/v1/zones/{tenant_id}/{zone_id}/signing-key` with body `{"public_key_hex": "<64-hex chars>"}` (the same call rotates a key in place; `GET` on the same path reads back the registered key). Never transmit or store a zone's *private* key anywhere but that zone's own persistent volume — only the public half is ever registered.
 
 You can use GitHub Actions to deploy your project automatically. 😎
 

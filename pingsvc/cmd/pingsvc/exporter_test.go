@@ -75,6 +75,33 @@ func TestBuildSnapshot_EmptyRedisProducesEmptySnapshot(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshot_StampsSchemaVersion(t *testing.T) {
+	_, rdb, _ := newTestRedis(t)
+	ctx := context.Background()
+
+	snap, err := buildSnapshot(ctx, rdb, "zone-1")
+	if err != nil {
+		t.Fatalf("buildSnapshot() error = %v", err)
+	}
+	if snap.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d, want 1", snap.SchemaVersion)
+	}
+
+	// The wire contract (plan §8): the field must appear in the JSON the
+	// server's ingestion parser sees, named exactly schema_version.
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal error = %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal error = %v", err)
+	}
+	if got, ok := wire["schema_version"].(float64); !ok || got != 1 {
+		t.Errorf(`wire "schema_version" = %v, want 1`, wire["schema_version"])
+	}
+}
+
 func TestBuildSnapshot_IncludesNodeCounters(t *testing.T) {
 	_, rdb, sha := newTestRedis(t)
 	ctx := context.Background()

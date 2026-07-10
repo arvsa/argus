@@ -323,6 +323,7 @@ class ClientSnapshotCreate(ClientSnapshotBase):
     nodes_json: dict[str, Any] = Field(default_factory=dict)
     devices_json: dict[str, Any] = Field(default_factory=dict)
     signature_verified: bool | None = None
+    schema_version: int | None = None
 
 
 class ClientSnapshot(ClientSnapshotBase, table=True):
@@ -343,6 +344,9 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     # None = no ZoneSigningKey registered for this zone at ingest time, so
     # the manifest (if any) couldn't be checked either way.
     signature_verified: bool | None = Field(default=None)
+    # The payload's own wire-contract version (plan §8). None = pushed by
+    # an exporter predating versioning.
+    schema_version: int | None = Field(default=None)
     pulled_at: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
@@ -354,6 +358,7 @@ class ClientSnapshotPublic(ClientSnapshotBase):
     nodes_json: dict[str, Any]
     devices_json: dict[str, Any]
     signature_verified: bool | None = None
+    schema_version: int | None = None
     pulled_at: datetime | None = None
 
 
@@ -379,6 +384,15 @@ class ZoneSummary(ZoneSummaryBase, table=True):
         default=None,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
+    # Operator-set label for dashboards; everything else on this row is
+    # machine-derived at ingest time and overwritten every cycle, this one
+    # field is not (upsert_zone_summary never touches it).
+    display_name: str | None = Field(default=None, max_length=255)
+
+
+# PATCH body for the operator-facing zone metadata (display_name only today).
+class ZoneSummaryUpdate(SQLModel):
+    display_name: str | None = Field(default=None, max_length=255)
 
 
 class ZoneSummaryPublic(ZoneSummaryBase):
@@ -387,6 +401,7 @@ class ZoneSummaryPublic(ZoneSummaryBase):
     down_count: int
     last_snapshot_ts: int | None = None
     last_pulled_at: datetime | None = None
+    display_name: str | None = None
     is_stale: bool
 
 
@@ -397,9 +412,8 @@ class ZoneSummariesPublic(SQLModel):
 
 # A zone's registered ed25519 public key (plan §4.4: "a real deployment
 # verifies against a public key registered out-of-band," not one carried in
-# the manifest itself). Registering/rotating this is an ops action -- no
-# HTTP route yet, only the crud functions an ingestion job or future admin
-# tool needs.
+# the manifest itself). Registered/rotated by a superuser via
+# PUT /zones/{tenant_id}/{zone_id}/signing-key.
 class ZoneSigningKeyBase(SQLModel):
     tenant_id: str = Field(max_length=255, index=True)
     zone_id: str = Field(max_length=255, index=True)
@@ -410,6 +424,12 @@ class ZoneSigningKeyBase(SQLModel):
 
 class ZoneSigningKeyCreate(ZoneSigningKeyBase):
     pass
+
+
+# Request body for the signing-key route: tenant/zone come from the path,
+# so only the key itself is in the body.
+class ZoneSigningKeyRegister(SQLModel):
+    public_key_hex: str = Field(max_length=64)
 
 
 class ZoneSigningKey(ZoneSigningKeyBase, table=True):
@@ -425,3 +445,10 @@ class ZoneSigningKey(ZoneSigningKeyBase, table=True):
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
     )
+
+
+# Only ever exposes the public half -- there is nothing secret in this
+# model, the private key never leaves the zone's pingsvc host.
+class ZoneSigningKeyPublic(ZoneSigningKeyBase):
+    id: uuid.UUID
+    created_at: datetime | None = None

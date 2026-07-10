@@ -1,11 +1,29 @@
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from pydantic.networks import EmailStr
 
 from app.api.deps import get_current_active_superuser
+from app.core.config import settings
 from app.models import Message
 from app.utils import generate_test_email, send_email
 
 router = APIRouter(prefix="/utils", tags=["utils"])
+
+
+class AppConfig(BaseModel):
+    role: str
+
+
+@router.get("/app-config")
+def app_config() -> AppConfig:
+    """
+    Runtime deployment config for the frontend: which role this backend
+    runs as (client = zone-local stack with the live ping pipeline,
+    server = central ingestion instance where those routes don't exist).
+    Public on purpose -- the shell needs it before login, and the role is
+    already inferable from which routes 404.
+    """
+    return AppConfig(role=settings.ROLE)
 
 
 @router.post(

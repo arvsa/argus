@@ -275,6 +275,178 @@ def test_run_ingestion_cycle_skips_already_ingested_objects(db: Session, s3_clie
     assert second == 0
 
 
+# ── schema_version (plan §8: wire contract) ────────────────────────────────
+
+def test_ingest_object_records_schema_version(db: Session, s3_client) -> None:
+    tenant_id = random_lower_string()
+    key = f"{tenant_id}/zone-1/2026/01/01/00/9000.json.gz"
+    payload = {"zone_id": "zone-1", "ts": 9000, "schema_version": 1, "nodes": {}, "devices": {}}
+    _put_snapshot(s3_client, key, payload)
+
+    assert ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=key) is True
+
+    from sqlmodel import select
+
+    from app.models import ClientSnapshot
+
+    snap = db.exec(select(ClientSnapshot).where(ClientSnapshot.storage_key == key)).first()
+    assert snap is not None
+    assert snap.schema_version == 1
+
+
+def test_ingest_object_accepts_versionless_legacy_payload(db: Session, s3_client) -> None:
+    tenant_id = random_lower_string()
+    key = f"{tenant_id}/zone-1/2026/01/01/00/9100.json.gz"
+    payload = {"zone_id": "zone-1", "ts": 9100, "nodes": {}, "devices": {}}
+    _put_snapshot(s3_client, key, payload)
+
+    assert ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=key) is True
+
+    from sqlmodel import select
+
+    from app.models import ClientSnapshot
+
+    snap = db.exec(select(ClientSnapshot).where(ClientSnapshot.storage_key == key)).first()
+    assert snap is not None
+    assert snap.schema_version is None
+
+
+def test_ingest_object_skips_unknown_future_schema_version(
+    db: Session, s3_client, caplog: pytest.LogCaptureFixture
+) -> None:
+    tenant_id = random_lower_string()
+    key = f"{tenant_id}/zone-1/2026/01/01/00/9200.json.gz"
+    payload = {"zone_id": "zone-1", "ts": 9200, "schema_version": 99, "nodes": {}, "devices": {}}
+    _put_snapshot(s3_client, key, payload)
+
+    with caplog.at_level(logging.WARNING):
+        assert ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=key) is False
+    assert crud.client_snapshot_already_ingested(session=db, storage_key=key) is False
+    assert any("schema_version" in r.message for r in caplog.records)
+
+
+def test_ingest_object_parses_exact_exporter_wire_format(db: Session, s3_client) -> None:
+    """Contract test (plan §8): this payload mirrors pingsvc's Snapshot
+    struct field-for-field (exporter.go json tags). If the exporter's shape
+    changes without a schema_version bump, this is the test that breaks."""
+    tenant_id = random_lower_string()
+    key = f"{tenant_id}/zone-hq/2026/01/01/00/1700000300000.json.gz"
+    payload = {
+        "zone_id": "zone-hq",
+        "ts": 1700000300000,
+        "schema_version": 1,
+        "nodes": {"campus-1": {"up": 2, "down": 1}},
+        "devices": {"8.8.8.8": {"ok": True, "ts": 1700000299000}},
+    }
+    _put_snapshot(s3_client, key, payload)
+
+    assert ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=key) is True
+
+    from sqlmodel import select
+
+    from app.models import ClientSnapshot, ZoneSummary
+
+    snap = db.exec(select(ClientSnapshot).where(ClientSnapshot.storage_key == key)).first()
+    assert snap is not None
+    assert snap.snapshot_ts == 1700000300000
+    assert snap.schema_version == 1
+    assert snap.nodes_json == {"campus-1": {"up": 2, "down": 1}}
+    assert snap.devices_json == {"8.8.8.8": {"ok": True, "ts": 1700000299000}}
+
+    summary = db.exec(
+        select(ZoneSummary).where(
+            ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == "zone-hq"
+        )
+    ).first()
+    assert summary is not None
+    assert summary.up_count == 1
+    assert summary.down_count == 0
+
+
+# ── replay guard (plan §4.4, monotonic-ts variant) ─────────────────────────
+
+def test_ingest_object_rejects_non_monotonic_ts_from_summary(
+    db: Session, s3_client, caplog: pytest.LogCaptureFixture
+) -> None:
+    tenant_id = random_lower_string()
+    fresh_key = f"{tenant_id}/zone-1/2026/01/01/01/5000.json.gz"
+    _put_snapshot(
+        s3_client,
+        fresh_key,
+        {"zone_id": "zone-1", "ts": 5000, "nodes": {},
+         "devices": {"10.0.0.1": {"ok": True, "ts": 5000}}},
+    )
+    assert ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=fresh_key) is True
+
+    # A validly-stored old payload re-uploaded under a NEW key -- exact-key
+    # idempotency doesn't catch this; the monotonic-ts guard must.
+    replay_key = f"{tenant_id}/zone-1/2026/01/01/02/4000.json.gz"
+    _put_snapshot(
+        s3_client,
+        replay_key,
+        {"zone_id": "zone-1", "ts": 4000, "nodes": {},
+         "devices": {"10.0.0.1": {"ok": False, "ts": 4000}, "10.0.0.2": {"ok": False, "ts": 4000}}},
+    )
+    with caplog.at_level(logging.WARNING):
+        ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=replay_key)
+
+    from sqlmodel import select
+
+    from app.models import ClientSnapshot, ZoneSummary
+
+    # The stale snapshot row is stored for audit, but the zone summary must
+    # still reflect the newest payload, not the replayed old one.
+    summary = db.exec(
+        select(ZoneSummary).where(
+            ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == "zone-1"
+        )
+    ).first()
+    assert summary is not None
+    assert summary.last_snapshot_ts == 5000
+    assert summary.up_count == 1
+    assert summary.down_count == 0
+
+    snap = db.exec(
+        select(ClientSnapshot).where(ClientSnapshot.storage_key == replay_key)
+    ).first()
+    assert snap is not None  # audit trail survives
+    assert any("replay" in r.message.lower() for r in caplog.records)
+
+
+def test_ingest_object_rejects_equal_ts(db: Session, s3_client) -> None:
+    tenant_id = random_lower_string()
+    first_key = f"{tenant_id}/zone-1/2026/01/01/03/7000.json.gz"
+    _put_snapshot(
+        s3_client,
+        first_key,
+        {"zone_id": "zone-1", "ts": 7000, "nodes": {},
+         "devices": {"10.0.0.1": {"ok": True, "ts": 7000}}},
+    )
+    ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=first_key)
+
+    dup_key = f"{tenant_id}/zone-1/2026/01/01/04/7000.json.gz"
+    _put_snapshot(
+        s3_client,
+        dup_key,
+        {"zone_id": "zone-1", "ts": 7000, "nodes": {},
+         "devices": {"10.0.0.1": {"ok": False, "ts": 7000}}},
+    )
+    ingest_object(session=db, s3_client=s3_client, bucket=BUCKET, key=dup_key)
+
+    from sqlmodel import select
+
+    from app.models import ZoneSummary
+
+    summary = db.exec(
+        select(ZoneSummary).where(
+            ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == "zone-1"
+        )
+    ).first()
+    assert summary is not None
+    assert summary.up_count == 1
+    assert summary.down_count == 0
+
+
 # ── staleness ──────────────────────────────────────────────────────────────
 
 def test_is_zone_stale_true_when_past_threshold() -> None:

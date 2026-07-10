@@ -165,7 +165,10 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-      target: dev
+      # dev = hot-reload Vite on 5173; prod = the static nginx stage.
+      # Production deploys must set FRONTEND_TARGET=prod (and
+      # FRONTEND_PORT=80) -- see deployment.md.
+      target: ${FRONTEND_TARGET:-dev}
     restart: always
     networks:
       - traefik-public
@@ -185,7 +188,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=traefik-public
       - traefik.constraint-label=traefik-public
-      - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=5173
+      - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=${FRONTEND_PORT:-5173}
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.entrypoints=http
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
@@ -244,31 +247,20 @@ services:
       - ARGUS_SIGNING_KEY_PATH=${ARGUS_SIGNING_KEY_PATH:-}
     volumes:
       - ./pingsvc/targets.txt:/etc/pingsvc/targets.txt:ro
+      # Spool dir AND the Ed25519 signing key live under /var/lib/argus --
+      # the key MUST persist across restarts (a regenerated key breaks the
+      # server's registered-key trust model entirely, see deployment.md).
+      - argus-data:/var/lib/argus
     # If your pingsvc exposes an HTTP metrics or admin port (optional), map it:
     ports:
       - "9090:9090"
-    # If you need raw ICMP (requires privileges), enable the capability below (see notes)
-    # cap_add:
-    #   - NET_RAW
-    #   - NET_ADMIN
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=traefik-public
-      - traefik.constraint-label=traefik-public
-
-      - traefik.http.services.${STACK_NAME?Variable not set}-pingsvc.loadbalancer.server.port=8000
-
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-http.rule=Host(`api.${DOMAIN?Variable not set}`)
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-http.entrypoints=http
-
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-https.rule=Host(`api.${DOMAIN?Variable not set}`)
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-https.entrypoints=https
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-https.tls=true
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-https.tls.certresolver=le
-
-      # Enable redirection for HTTP and HTTPS
-      - traefik.http.routers.${STACK_NAME?Variable not set}-pingsvc-http.middlewares=https-redirect
-
+    # Raw ICMP sockets -- without this every device reports down.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    # No Traefik labels: pingsvc serves nothing but :9090 Prometheus
+    # metrics. (Labels previously here routed api.${DOMAIN} to a port
+    # pingsvc doesn't serve, colliding with the backend's router.)
     deploy:
       resources:
         limits:
@@ -276,6 +268,7 @@ services:
 volumes:
   app-db-data:
   redis-data:
+  argus-data:
 
 
 networks:

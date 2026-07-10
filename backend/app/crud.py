@@ -172,6 +172,70 @@ def client_snapshot_already_ingested(*, session: Session, storage_key: str) -> b
     return session.exec(statement).first() is not None
 
 
+def get_zone_summary(
+    *, session: Session, tenant_id: str, zone_id: str
+) -> ZoneSummary | None:
+    statement = select(ZoneSummary).where(
+        ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == zone_id
+    )
+    return session.exec(statement).first()
+
+
+def prune_old_client_snapshots(*, session: Session, retention_days: int) -> int:
+    """Delete ClientSnapshot rows pulled more than retention_days ago,
+    always keeping each zone's newest row -- a dark zone's last known
+    state must stay inspectable no matter how old it gets. Returns the
+    number of rows deleted. Row volume is one per zone per push interval,
+    so loading candidate ids into memory is fine at any realistic scale."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    newest_ids = {
+        session.exec(
+            select(ClientSnapshot.id)
+            .where(
+                ClientSnapshot.tenant_id == tenant_id,
+                ClientSnapshot.zone_id == zone_id,
+            )
+            .order_by(col(ClientSnapshot.snapshot_ts).desc())
+            .limit(1)
+        ).first()
+        for tenant_id, zone_id in session.exec(
+            select(ClientSnapshot.tenant_id, ClientSnapshot.zone_id).distinct()
+        ).all()
+    }
+
+    expired = session.exec(
+        select(ClientSnapshot).where(col(ClientSnapshot.pulled_at) < cutoff)
+    ).all()
+    deleted = 0
+    for snap in expired:
+        if snap.id in newest_ids:
+            continue
+        session.delete(snap)
+        deleted += 1
+    if deleted:
+        session.commit()
+    return deleted
+
+
+def get_latest_client_snapshot(
+    *, session: Session, tenant_id: str, zone_id: str
+) -> ClientSnapshot | None:
+    """Newest ingested snapshot for a zone, by the payload's own snapshot_ts
+    (pingsvc's export time), not pulled_at -- ingestion order isn't guaranteed
+    to match export order when a spool backlog is flushed."""
+    statement = (
+        select(ClientSnapshot)
+        .where(
+            ClientSnapshot.tenant_id == tenant_id,
+            ClientSnapshot.zone_id == zone_id,
+        )
+        .order_by(col(ClientSnapshot.snapshot_ts).desc())
+        .limit(1)
+    )
+    return session.exec(statement).first()
+
+
 def upsert_zone_summary(
     *,
     session: Session,
@@ -208,6 +272,24 @@ def upsert_zone_summary(
     session.commit()
     session.refresh(db_obj)
     return db_obj
+
+
+def set_zone_display_name(
+    *, session: Session, tenant_id: str, zone_id: str, display_name: str | None
+) -> ZoneSummary | None:
+    """Set the operator-facing label on an existing zone summary row.
+    Returns None if the zone has never been ingested (no row to label)."""
+    statement = select(ZoneSummary).where(
+        ZoneSummary.tenant_id == tenant_id, ZoneSummary.zone_id == zone_id
+    )
+    existing = session.exec(statement).first()
+    if existing is None:
+        return None
+    existing.display_name = display_name
+    session.add(existing)
+    session.commit()
+    session.refresh(existing)
+    return existing
 
 
 def create_zone_signing_key(

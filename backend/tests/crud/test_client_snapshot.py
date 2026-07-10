@@ -57,6 +57,66 @@ def test_client_snapshot_already_ingested(db: Session) -> None:
     assert crud.client_snapshot_already_ingested(session=db, storage_key=key) is True
 
 
+# ── retention pruning ─────────────────────────────────────────────────────
+
+def test_prune_old_client_snapshots_deletes_expired_rows(db: Session) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    tenant_id = random_lower_string()
+    old = crud.create_client_snapshot(
+        session=db,
+        snapshot_create=_snapshot_create(
+            tenant_id, "zone-1", f"{tenant_id}/zone-1/2026/01/01/00/1000.json.gz", ts=1000
+        ),
+    )
+    fresh = crud.create_client_snapshot(
+        session=db,
+        snapshot_create=_snapshot_create(
+            tenant_id, "zone-1", f"{tenant_id}/zone-1/2026/01/02/00/2000.json.gz", ts=2000
+        ),
+    )
+    # Age the first row past the retention window.
+    old.pulled_at = datetime.now(timezone.utc) - timedelta(days=10)
+    db.add(old)
+    db.commit()
+
+    deleted = crud.prune_old_client_snapshots(session=db, retention_days=7)
+
+    assert deleted >= 1
+    assert (
+        crud.client_snapshot_already_ingested(session=db, storage_key=old.storage_key)
+        is False
+    )
+    assert (
+        crud.client_snapshot_already_ingested(session=db, storage_key=fresh.storage_key)
+        is True
+    )
+
+
+def test_prune_old_client_snapshots_always_keeps_newest_per_zone(db: Session) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    tenant_id = random_lower_string()
+    only = crud.create_client_snapshot(
+        session=db,
+        snapshot_create=_snapshot_create(
+            tenant_id, "zone-dark", f"{tenant_id}/zone-dark/2026/01/01/00/1000.json.gz", ts=1000
+        ),
+    )
+    # Even a months-old snapshot survives if it's the zone's newest -- a
+    # dark zone's last known state must stay inspectable.
+    only.pulled_at = datetime.now(timezone.utc) - timedelta(days=90)
+    db.add(only)
+    db.commit()
+
+    crud.prune_old_client_snapshots(session=db, retention_days=7)
+
+    assert (
+        crud.client_snapshot_already_ingested(session=db, storage_key=only.storage_key)
+        is True
+    )
+
+
 # ── ZoneSummary ──────────────────────────────────────────────────────────
 
 def test_upsert_zone_summary_creates_new_row(db: Session) -> None:

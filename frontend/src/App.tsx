@@ -3,7 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "@/layouts/AppShell";
 import { AuthLayout } from "@/layouts/AuthLayout";
 import { RequireAuth, RequireSuperuser } from "@/layouts/RequireAuth";
-import { Dashboard } from "@/pages/Dashboard";
+import { RoleLanding, ClientOnlyRoute } from "@/layouts/RoleGates";
 import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
 import { ForgotPassword } from "@/pages/ForgotPassword";
@@ -13,6 +13,7 @@ import { NodeTypesPage } from "@/pages/hierarchy/NodeTypes";
 import { NodesPage } from "@/pages/hierarchy/Nodes";
 import { DevicesPage } from "@/pages/Devices";
 import { ZonesPage } from "@/pages/Zones";
+import { ZoneDetailPage } from "@/pages/ZoneDetail";
 import { UsersPage } from "@/pages/admin/Users";
 import { Toaster } from "@/components/Toaster";
 
@@ -32,14 +33,22 @@ export default function App() {
 
           <Route element={<RequireAuth />}>
             <Route element={<AppShell />}>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/" element={<RoleLanding />} />
               <Route path="/hierarchy" element={<NodesPage />} />
               <Route element={<RequireSuperuser />}>
                 <Route path="/hierarchy/types" element={<NodeTypesPage />} />
                 <Route path="/admin/users" element={<UsersPage />} />
               </Route>
-              <Route path="/devices" element={<DevicesPage />} />
+              <Route
+                path="/devices"
+                element={
+                  <ClientOnlyRoute>
+                    <DevicesPage />
+                  </ClientOnlyRoute>
+                }
+              />
               <Route path="/zones" element={<ZonesPage />} />
+              <Route path="/zones/:tenantId/:zoneId" element={<ZoneDetailPage />} />
               <Route path="/profile" element={<Profile />} />
             </Route>
           </Route>

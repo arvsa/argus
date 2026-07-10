@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/store/auth";
+import { useAppConfig } from "@/hooks/useAppConfig";
 import { LiveFeedProvider } from "@/hooks/useLiveFeed";
 import { WsIndicator } from "@/components/WsIndicator";
 
@@ -26,11 +27,19 @@ interface NavItem {
   icon: React.ElementType;
 }
 
-const nav: NavItem[] = [
+// Dashboard/Devices ride on the ping pipeline (/stats, /state, /ws/pings),
+// which only exists on a client (zone-local) backend -- a central
+// argus-server unmounts those routes, so its nav leads with Zones.
+const clientNav: NavItem[] = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard },
   { to: "/hierarchy", label: "Hierarchy", icon: Network },
   { to: "/devices", label: "Devices", icon: Activity },
   { to: "/zones", label: "Zones", icon: Globe2 },
+];
+
+const serverNav: NavItem[] = [
+  { to: "/zones", label: "Zones", icon: Globe2 },
+  { to: "/hierarchy", label: "Hierarchy", icon: Network },
 ];
 
 const adminNav: NavItem[] = [
@@ -40,6 +49,10 @@ const adminNav: NavItem[] = [
 
 export function AppShell() {
   const { user, logout } = useAuthStore();
+  const { role, isLoaded } = useAppConfig();
+  // Render no nav items until the role probe settles -- a moment of empty
+  // sidebar beats flashing client-only links on a server deployment.
+  const nav = isLoaded ? (role === "server" ? serverNav : clientNav) : [];
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -121,8 +134,7 @@ export function AppShell() {
     </div>
   );
 
-  return (
-    <LiveFeedProvider>
+  const shell = (
     <div className="flex h-screen overflow-hidden bg-gray-50">
       <aside
         className={cn(
@@ -156,7 +168,7 @@ export function AppShell() {
           </button>
 
           <div className="ml-auto flex items-center gap-4">
-            <WsIndicator />
+            {isLoaded && role === "client" && <WsIndicator />}
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-full bg-blue-100 text-xs font-semibold text-blue-700">
                 {user?.full_name?.[0]?.toUpperCase() ?? user?.email?.[0]?.toUpperCase() ?? "?"}
@@ -173,6 +185,9 @@ export function AppShell() {
         </main>
       </div>
     </div>
-    </LiveFeedProvider>
   );
+
+  // The live feed's WebSocket (/ws/pings) only exists on a client backend;
+  // mounting it on a server would show a permanent connection error.
+  return role === "client" ? <LiveFeedProvider>{shell}</LiveFeedProvider> : shell;
 }
