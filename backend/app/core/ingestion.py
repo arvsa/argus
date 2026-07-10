@@ -68,6 +68,12 @@ def _fetch_bytes(s3_client: Any, bucket: str, key: str) -> bytes:
     return body
 
 
+# Highest snapshot schema_version (plan §8) this server understands.
+# Payloads with no version at all are pre-versioning exporters, accepted
+# as-is; anything newer than this is skipped until the server upgrades.
+SUPPORTED_SNAPSHOT_SCHEMA_VERSION = 1
+
+
 def ingest_object(*, session: Session, s3_client: Any, bucket: str, key: str) -> bool:
     """Ingest a single snapshot object. Returns False without re-ingesting
     if storage_key was already seen (idempotent).
@@ -87,6 +93,17 @@ def ingest_object(*, session: Session, s3_client: Any, bucket: str, key: str) ->
     raw_gz = _fetch_bytes(s3_client, bucket, key)
     payload = json.loads(gzip.decompress(raw_gz))
 
+    schema_version = payload.get("schema_version")
+    if schema_version is not None and schema_version > SUPPORTED_SNAPSHOT_SCHEMA_VERSION:
+        logger.warning(
+            "skipping %s: schema_version %s is newer than supported %s -- "
+            "upgrade argus-server to ingest this zone",
+            key,
+            schema_version,
+            SUPPORTED_SNAPSHOT_SCHEMA_VERSION,
+        )
+        return False
+
     signature_verified: bool | None = None
     registered_key = crud.get_zone_signing_key(
         session=session, tenant_id=tenant_id, zone_id=zone_id
@@ -102,19 +119,46 @@ def ingest_object(*, session: Session, s3_client: Any, bucket: str, key: str) ->
 
     nodes = payload.get("nodes", {})
     devices = payload.get("devices", {})
+    snapshot_ts = payload.get("ts", 0)
 
     crud.create_client_snapshot(
         session=session,
         snapshot_create=ClientSnapshotCreate(
             tenant_id=tenant_id,
             zone_id=zone_id,
-            snapshot_ts=payload.get("ts", 0),
+            snapshot_ts=snapshot_ts,
             storage_key=key,
             nodes_json=nodes,
             devices_json=devices,
             signature_verified=signature_verified,
+            schema_version=schema_version,
         ),
     )
+
+    # Replay guard (plan §4.4, monotonic-ts variant): exact-key idempotency
+    # can't catch a validly-signed OLD payload re-uploaded under a NEW key,
+    # which would roll the zone's summary back to stale counts. The row
+    # above is still stored (audit trail); only the summary is protected.
+    # Legitimate spool-backlog flushes are oldest-first and strictly
+    # increasing, so they never trip this.
+    existing_summary = crud.get_zone_summary(
+        session=session, tenant_id=tenant_id, zone_id=zone_id
+    )
+    if (
+        existing_summary is not None
+        and existing_summary.last_snapshot_ts is not None
+        and snapshot_ts <= existing_summary.last_snapshot_ts
+    ):
+        logger.warning(
+            "possible replay: %s has ts %s <= zone %s/%s's last_snapshot_ts %s; "
+            "stored for audit but not applied to the zone summary",
+            key,
+            snapshot_ts,
+            tenant_id,
+            zone_id,
+            existing_summary.last_snapshot_ts,
+        )
+        return True
 
     # Derived from `devices` (one entry per device), not summed across
     # `nodes` -- nodes is an ancestor rollup, so a single device is counted
@@ -127,7 +171,7 @@ def ingest_object(*, session: Session, s3_client: Any, bucket: str, key: str) ->
         zone_id=zone_id,
         up_count=up_count,
         down_count=down_count,
-        last_snapshot_ts=payload.get("ts", 0),
+        last_snapshot_ts=snapshot_ts,
     )
     return True
 
@@ -215,6 +259,13 @@ async def ingestion_task(stop_event: asyncio.Event) -> None:
                     session=session,
                     threshold_seconds=settings.STALENESS_THRESHOLD_SECONDS,
                 )
+                pruned = await asyncio.to_thread(
+                    crud.prune_old_client_snapshots,
+                    session=session,
+                    retention_days=settings.SNAPSHOT_RETENTION_DAYS,
+                )
+                if pruned:
+                    logger.info("ingestion: pruned %d expired snapshot(s)", pruned)
         except Exception:
             logger.exception("ingestion cycle failed")
 

@@ -120,6 +120,10 @@ class Settings(BaseSettings):
     # push-interval registration yet, so this is one global default rather
     # than something derived per zone.
     STALENESS_THRESHOLD_SECONDS: int = 120
+    # ClientSnapshot rows older than this are pruned each ingestion cycle
+    # (each zone's newest row is always kept regardless of age). Without
+    # this the table grows by one row per zone per push interval, forever.
+    SNAPSHOT_RETENTION_DAYS: int = 7
 
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":

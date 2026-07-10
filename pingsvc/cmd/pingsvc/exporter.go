@@ -33,16 +33,23 @@ type ExporterConfig struct {
 	Signer *Signer
 }
 
+// snapshotSchemaVersion is the wire-contract version of Snapshot's JSON
+// shape (plan §8) — independent of app semver, bumped only when the
+// payload format changes incompatibly. The server tolerates the current
+// and absent (pre-versioning) values and skips anything newer.
+const snapshotSchemaVersion = 1
+
 // Snapshot is the periodic aggregated payload an argus-client exports.
 // It carries rollups already computed by the Lua script (stats:node:*)
 // plus a snapshot of pings:state, not raw ping events — the ping pipeline
 // already does the per-event work, so the exporter's job is purely to read
 // the current aggregate, not to duplicate it.
 type Snapshot struct {
-	ZoneID  string                 `json:"zone_id"`
-	TS      int64                  `json:"ts"`
-	Nodes   map[string]NodeCounts  `json:"nodes"`
-	Devices map[string]DeviceState `json:"devices"`
+	SchemaVersion int                    `json:"schema_version"`
+	ZoneID        string                 `json:"zone_id"`
+	TS            int64                  `json:"ts"`
+	Nodes         map[string]NodeCounts  `json:"nodes"`
+	Devices       map[string]DeviceState `json:"devices"`
 }
 
 type NodeCounts struct {
@@ -60,10 +67,11 @@ type DeviceState struct {
 // miniredis on its own.
 func buildSnapshot(ctx context.Context, rdb redis.Cmdable, zoneID string) (Snapshot, error) {
 	snap := Snapshot{
-		ZoneID:  zoneID,
-		TS:      nowMs(),
-		Nodes:   map[string]NodeCounts{},
-		Devices: map[string]DeviceState{},
+		SchemaVersion: snapshotSchemaVersion,
+		ZoneID:        zoneID,
+		TS:            nowMs(),
+		Nodes:         map[string]NodeCounts{},
+		Devices:       map[string]DeviceState{},
 	}
 
 	nodeKeys, err := rdb.Keys(ctx, "stats:node:*").Result()

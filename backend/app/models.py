@@ -323,6 +323,7 @@ class ClientSnapshotCreate(ClientSnapshotBase):
     nodes_json: dict[str, Any] = Field(default_factory=dict)
     devices_json: dict[str, Any] = Field(default_factory=dict)
     signature_verified: bool | None = None
+    schema_version: int | None = None
 
 
 class ClientSnapshot(ClientSnapshotBase, table=True):
@@ -343,6 +344,9 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     # None = no ZoneSigningKey registered for this zone at ingest time, so
     # the manifest (if any) couldn't be checked either way.
     signature_verified: bool | None = Field(default=None)
+    # The payload's own wire-contract version (plan §8). None = pushed by
+    # an exporter predating versioning.
+    schema_version: int | None = Field(default=None)
     pulled_at: datetime | None = Field(
         default_factory=get_datetime_utc,
         sa_type=DateTime(timezone=True),  # type: ignore
@@ -354,6 +358,7 @@ class ClientSnapshotPublic(ClientSnapshotBase):
     nodes_json: dict[str, Any]
     devices_json: dict[str, Any]
     signature_verified: bool | None = None
+    schema_version: int | None = None
     pulled_at: datetime | None = None
 
 
