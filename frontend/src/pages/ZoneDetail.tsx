@@ -1,13 +1,21 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { isAxiosError } from "axios";
-import { Inbox } from "lucide-react";
-import { getLatestZoneSnapshot, getZoneSummaries } from "@/api/zones";
+import { Inbox, KeyRound, Pencil } from "lucide-react";
+import {
+  getLatestZoneSnapshot,
+  getZoneSigningKey,
+  getZoneSummaries,
+  registerZoneSigningKey,
+  updateZoneDisplayName,
+} from "@/api/zones";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { NodeStatusBadge } from "@/components/NodeStatusBadge";
+import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
 function is404(err: unknown): boolean {
@@ -17,6 +25,13 @@ function is404(err: unknown): boolean {
 function formatTs(ms: number | null): string {
   return ms ? new Date(ms).toLocaleString() : "—";
 }
+
+// Snapshots from a real zone carry thousands of devices; rendering them
+// all makes the page unusable, so render at most this many and tell the
+// operator to filter.
+const DEVICE_RENDER_CAP = 200;
+
+const HEX_KEY_RE = /^[0-9a-fA-F]{64}$/;
 
 function SignatureBadge({ verified }: { verified: boolean | null }) {
   const config =
@@ -32,12 +47,180 @@ function SignatureBadge({ verified }: { verified: boolean | null }) {
   );
 }
 
+// Superuser-only inline rename for the operator-set zone display name
+// (PATCH /zones/{tenant_id}/{zone_id}).
+function DisplayNameEditor({
+  tenantId,
+  zoneId,
+  currentName,
+}: {
+  tenantId: string;
+  zoneId: string;
+  currentName: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: (displayName: string | null) =>
+      updateZoneDisplayName(tenantId, zoneId, displayName),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["zones"] });
+      setEditing(false);
+    },
+  });
+
+  if (!editing) {
+    return (
+      <button
+        aria-label="Edit display name"
+        title="Edit display name"
+        onClick={() => {
+          setName(currentName ?? "");
+          setEditing(true);
+        }}
+        className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-600"
+      >
+        <Pencil className="h-4 w-4" />
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        mutation.mutate(name.trim() || null);
+      }}
+    >
+      <input
+        aria-label="Display name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        placeholder="Display name"
+        maxLength={255}
+        autoFocus
+        className="rounded-lg border border-gray-300 px-2.5 py-1 text-sm focus:border-blue-500 focus:outline-none"
+      />
+      <button
+        type="submit"
+        disabled={mutation.isPending}
+        className="rounded-lg bg-blue-600 px-3 py-1 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        Save
+      </button>
+      <button
+        type="button"
+        onClick={() => setEditing(false)}
+        className="rounded-lg px-2 py-1 text-sm text-gray-500 hover:bg-gray-100"
+      >
+        Cancel
+      </button>
+      {mutation.isError && (
+        <span className="text-xs text-red-600">Couldn't save the name.</span>
+      )}
+    </form>
+  );
+}
+
+// Shows the zone's registered Ed25519 verification key and, for
+// superusers, a register/rotate form (PUT .../signing-key). This is the
+// out-of-band registration step the ingestion pipeline's signature
+// verification depends on -- the server never trusts a manifest's own
+// embedded key.
+function SigningKeyPanel({ tenantId, zoneId }: { tenantId: string; zoneId: string }) {
+  const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
+  const queryClient = useQueryClient();
+  const [keyHex, setKeyHex] = useState("");
+
+  const { data: registered, isError, error } = useQuery({
+    queryKey: ["zone-signing-key", tenantId, zoneId],
+    queryFn: () => getZoneSigningKey(tenantId, zoneId),
+    // 404 = no key registered yet, an expected state.
+    retry: false,
+  });
+  const unregistered = isError && is404(error);
+
+  const mutation = useMutation({
+    mutationFn: (hex: string) => registerZoneSigningKey(tenantId, zoneId, hex),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["zone-signing-key", tenantId, zoneId] });
+      setKeyHex("");
+    },
+  });
+
+  return (
+    <section className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <h2 className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-gray-500">
+        <KeyRound className="h-3.5 w-3.5" /> Signing key
+      </h2>
+
+      <div className="mt-3 space-y-3 text-sm">
+        {registered && (
+          <div>
+            <p className="break-all font-mono text-xs text-gray-700">
+              {registered.public_key_hex}
+            </p>
+            <p className="mt-1 text-xs text-gray-400">
+              Registered{" "}
+              {registered.created_at
+                ? new Date(registered.created_at).toLocaleString()
+                : "—"}
+              . Snapshot manifests from this zone are verified against this key.
+            </p>
+          </div>
+        )}
+        {unregistered && (
+          <p className="text-gray-500">
+            No signing key registered — snapshots from this zone are ingested without
+            signature verification.
+          </p>
+        )}
+
+        {isSuperuser && (
+          <form
+            className="flex flex-wrap items-center gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              mutation.mutate(keyHex.trim());
+            }}
+          >
+            <input
+              aria-label="Public key (hex)"
+              value={keyHex}
+              onChange={(e) => setKeyHex(e.target.value)}
+              placeholder="Ed25519 public key, 64 hex chars (from the zone's signing.key.pub)"
+              className="w-full max-w-xl rounded-lg border border-gray-300 px-2.5 py-1.5 font-mono text-xs focus:border-blue-500 focus:outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!HEX_KEY_RE.test(keyHex.trim()) || mutation.isPending}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {registered ? "Rotate key" : "Register key"}
+            </button>
+            {mutation.isError && (
+              <span className="text-xs text-red-600">
+                Registration failed — is the key 64 hex characters?
+              </span>
+            )}
+          </form>
+        )}
+      </div>
+    </section>
+  );
+}
+
 // Per-zone drill-down behind a row on the Zones page: renders the zone's
 // latest ingested snapshot. The node ids/addresses are whatever that
 // zone's pingsvc target file declared -- opaque strings, deliberately not
 // resolved against this server's own Node table (plan §4.5).
 export function ZoneDetailPage() {
   const { tenantId, zoneId } = useParams<{ tenantId: string; zoneId: string }>();
+  const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
+  const [deviceFilter, setDeviceFilter] = useState("");
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["zone-snapshot", tenantId, zoneId],
@@ -58,19 +241,40 @@ export function ZoneDetailPage() {
     (z) => z.tenant_id === tenantId && z.zone_id === zoneId
   );
 
-  const devices = Object.entries(data?.devices_json ?? {}).sort(([a], [b]) =>
-    a.localeCompare(b)
+  // Down devices first (they're what an operator opens this page for),
+  // then by address.
+  const devices = useMemo(
+    () =>
+      Object.entries(data?.devices_json ?? {}).sort(
+        ([aAddr, a], [bAddr, b]) =>
+          Number(a.ok) - Number(b.ok) || aAddr.localeCompare(bAddr)
+      ),
+    [data]
   );
+  const filteredDevices = deviceFilter
+    ? devices.filter(([addr]) => addr.includes(deviceFilter.trim()))
+    : devices;
+  const renderedDevices = filteredDevices.slice(0, DEVICE_RENDER_CAP);
+
   const nodes = Object.entries(data?.nodes_json ?? {}).sort(([a], [b]) =>
     a.localeCompare(b)
   );
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={summary?.display_name ?? zoneId ?? "Zone"}
-        description={`Latest snapshot from ${tenantId}/${zoneId}`}
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <PageHeader
+          title={summary?.display_name ?? zoneId ?? "Zone"}
+          description={`Latest snapshot from ${tenantId}/${zoneId}`}
+        />
+        {isSuperuser && tenantId && zoneId && (
+          <DisplayNameEditor
+            tenantId={tenantId}
+            zoneId={zoneId}
+            currentName={summary?.display_name ?? null}
+          />
+        )}
+      </div>
 
       {isLoading && <PageSpinner />}
 
@@ -110,15 +314,25 @@ export function ZoneDetailPage() {
             </span>
           </div>
 
+          {tenantId && zoneId && <SigningKeyPanel tenantId={tenantId} zoneId={zoneId} />}
+
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-              <h2 className="border-b border-gray-100 bg-gray-50 px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-gray-500">
-                Devices ({devices.length})
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-4 py-2.5">
+                <h2 className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                  Devices ({filteredDevices.length})
+                </h2>
+                <input
+                  value={deviceFilter}
+                  onChange={(e) => setDeviceFilter(e.target.value)}
+                  placeholder="Filter by address…"
+                  className="rounded-lg border border-gray-300 px-2.5 py-1 text-xs focus:border-blue-500 focus:outline-none"
+                />
+              </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table aria-label="Devices" className="w-full text-sm">
                   <tbody className="divide-y divide-gray-100">
-                    {devices.map(([addr, state]) => (
+                    {renderedDevices.map(([addr, state]) => (
                       <tr key={addr}>
                         <td className="px-4 py-2.5 font-mono text-gray-700">{addr}</td>
                         <td className="px-4 py-2.5">
@@ -134,9 +348,22 @@ export function ZoneDetailPage() {
                         </td>
                       </tr>
                     )}
+                    {devices.length > 0 && filteredDevices.length === 0 && (
+                      <tr>
+                        <td className="px-4 py-6 text-center text-gray-400">
+                          No devices match the filter
+                        </td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
+              {filteredDevices.length > DEVICE_RENDER_CAP && (
+                <p className="border-t border-gray-100 px-4 py-2 text-xs text-gray-500">
+                  Showing {DEVICE_RENDER_CAP} of {filteredDevices.length} devices — use
+                  the filter to narrow down.
+                </p>
+              )}
             </section>
 
             <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from pydantic import EmailStr
-from sqlalchemy import JSON, BigInteger, Column, DateTime, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Column, DateTime, Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -328,6 +328,16 @@ class ClientSnapshotCreate(ClientSnapshotBase):
 
 class ClientSnapshot(ClientSnapshotBase, table=True):
     __tablename__ = "client_snapshot"
+    # get_latest_client_snapshot's ORDER BY snapshot_ts LIMIT 1 must be
+    # resolvable from an index: without one MySQL filesorts entire rows,
+    # and rows here carry multi-hundred-KB JSON columns, so realistically
+    # sized snapshots blow the sort buffer (error 1038) and 500 the zone
+    # detail endpoint.
+    __table_args__ = (
+        Index(
+            "ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     # unix-ms timestamp (pingsvc's nowMs(), ~13 digits) needs BigInteger --
