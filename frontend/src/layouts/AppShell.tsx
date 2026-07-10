@@ -188,6 +188,12 @@ export function AppShell() {
   );
 
   // The live feed's WebSocket (/ws/pings) only exists on a client backend;
-  // mounting it on a server would show a permanent connection error.
-  return role === "client" ? <LiveFeedProvider>{shell}</LiveFeedProvider> : shell;
+  // mounting it on a server would show a permanent connection error. Wait
+  // for the probe to settle -- role defaults to "client" while loading, and
+  // mounting on that guess opens a doomed socket on server deployments.
+  return isLoaded && role === "client" ? (
+    <LiveFeedProvider>{shell}</LiveFeedProvider>
+  ) : (
+    shell
+  );
 }

@@ -11,9 +11,12 @@ vi.mock("@/api/appConfig", () => ({
 }));
 
 // The live feed opens a real WebSocket -- out of scope here, covered in
-// useLiveFeed.test.tsx.
+// useLiveFeed.test.tsx. The testid marks when AppShell actually mounts the
+// provider (and would therefore open the socket).
 vi.mock("@/hooks/useLiveFeed", () => ({
-  LiveFeedProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  LiveFeedProvider: ({ children }: { children: React.ReactNode }) => (
+    <div data-testid="live-feed-provider">{children}</div>
+  ),
   useLiveFeed: () => ({ status: "open", events: [] }),
 }));
 
@@ -58,6 +61,26 @@ describe("AppShell role-aware navigation", () => {
     expect(screen.getByText("Zones")).toBeInTheDocument();
     expect(screen.getByText("Hierarchy")).toBeInTheDocument();
     expect(screen.getByText("Live")).toBeInTheDocument();
+    expect(screen.getByTestId("live-feed-provider")).toBeInTheDocument();
+  });
+
+  it("never mounts the live feed before the role probe settles or on a server", async () => {
+    // An unresolved probe must not fall back to client behavior: on a real
+    // server deployment that window opened a doomed WebSocket (403) on
+    // every page load.
+    let resolveProbe!: (v: { role: "client" | "server" }) => void;
+    vi.mocked(appConfigApi.getAppConfig).mockReturnValue(
+      new Promise((r) => {
+        resolveProbe = r;
+      })
+    );
+    renderShell();
+
+    expect(screen.queryByTestId("live-feed-provider")).not.toBeInTheDocument();
+
+    resolveProbe({ role: "server" });
+    expect(await screen.findByText("Zones")).toBeInTheDocument();
+    expect(screen.queryByTestId("live-feed-provider")).not.toBeInTheDocument();
   });
 
   it("server role: hides ping-pipeline nav and the WS indicator", async () => {

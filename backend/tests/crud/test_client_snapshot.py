@@ -204,3 +204,18 @@ def test_create_zone_signing_key_rotation_replaces_existing_key(db: Session) -> 
 def test_get_zone_signing_key_returns_none_when_unregistered(db: Session) -> None:
     tenant_id = random_lower_string()
     assert crud.get_zone_signing_key(session=db, tenant_id=tenant_id, zone_id="zone-1") is None
+
+
+def test_client_snapshot_has_composite_zone_ts_index(db: Session) -> None:
+    """get_latest_client_snapshot orders by snapshot_ts within one zone.
+    Without a composite (tenant_id, zone_id, snapshot_ts) index MySQL
+    filesorts entire rows -- including the multi-hundred-KB JSON columns --
+    and dies with error 1038 (out of sort memory) on realistically sized
+    snapshots, 500ing the zone detail endpoint."""
+    from sqlalchemy import inspect
+
+    indexes = inspect(db.get_bind()).get_indexes("client_snapshot")
+    assert any(
+        ix["column_names"] == ["tenant_id", "zone_id", "snapshot_ts"]
+        for ix in indexes
+    ), f"missing composite zone/ts index; have: {[ix['name'] for ix in indexes]}"
