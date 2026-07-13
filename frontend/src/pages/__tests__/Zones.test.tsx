@@ -1,14 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ZonesPage } from "@/pages/Zones";
+import { useAuthStore } from "@/store/auth";
 import * as zonesApi from "@/api/zones";
 import type { ZoneSummary } from "@/api/zones";
 
 vi.mock("@/api/zones", () => ({
   getZoneSummaries: vi.fn(),
 }));
+
+function setUser(isSuperuser: boolean) {
+  useAuthStore.setState({
+    token: "t",
+    user: {
+      id: "u1",
+      email: "op@example.com",
+      full_name: "Operator",
+      is_active: true,
+      is_superuser: isSuperuser,
+      admission_status: "approved",
+      created_at: "2024-01-01T00:00:00Z",
+    },
+  });
+}
 
 function zone(overrides: Partial<ZoneSummary> = {}): ZoneSummary {
   return {
@@ -42,6 +59,7 @@ function renderPage() {
 describe("ZonesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    setUser(true);
   });
 
   it("shows the not-configured empty state when there are no zones -- not an error", async () => {
@@ -101,5 +119,28 @@ describe("ZonesPage", () => {
     expect(await screen.findByText(/couldn't load zones/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
     expect(screen.queryByText(/not configured for this deployment/i)).not.toBeInTheDocument();
+  });
+
+  // ── Add zone ─────────────────────────────────────────────────────────
+
+  it("navigates to a typed tenant/zone id from the Add zone form", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: /add zone/i }));
+    await userEvent.type(screen.getByRole("textbox", { name: /tenant id/i }), "acme-corp");
+    await userEvent.type(screen.getByRole("textbox", { name: /zone id/i }), "zone-3");
+    await userEvent.click(screen.getByRole("button", { name: /^go$/i }));
+
+    expect(await screen.findByText("Zone Detail Stub")).toBeInTheDocument();
+  });
+
+  it("hides the Add zone control from non-superusers", async () => {
+    setUser(false);
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    renderPage();
+
+    expect(await screen.findByText(/not configured for this deployment/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /add zone/i })).not.toBeInTheDocument();
   });
 });
