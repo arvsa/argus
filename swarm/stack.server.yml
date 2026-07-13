@@ -108,6 +108,13 @@ services:
     networks:
       - traefik-public
       - default
+    environment:
+      # Every zone's frontend shares the same external traefik-public
+      # overlay network, so the bare Compose DNS name "backend" is
+      # ambiguous across stacks -- see frontend/nginx.conf.template.
+      # "<stack-name>_backend" is swarm's own globally-unique full service
+      # name, unambiguous regardless of shared networks.
+      - BACKEND_UPSTREAM=${STACK_NAME?Variable not set}_backend
     deploy:
       labels:
         - traefik.enable=true

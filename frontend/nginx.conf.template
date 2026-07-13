@@ -1,0 +1,28 @@
+server {
+    listen 80;
+    server_name _;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Proxy REST + WebSocket traffic to the backend service. BACKEND_UPSTREAM
+    # defaults to the bare Compose DNS name "backend" (correct there -- one
+    # stack, one project-scoped network). In Swarm, every zone's frontend
+    # also shares the *same* external traefik-public overlay network, so the
+    # bare name "backend" is ambiguous across stacks -- swarm/stack.*.yml
+    # override this to the swarm-unique "<stack-name>_backend" instead.
+    # Rendered from this .template by nginx's own envsubst-on-startup
+    # (docker-entrypoint.d/20-envsubst-on-templates.sh) -- see Dockerfile.
+    location /api/ {
+        proxy_pass http://${BACKEND_UPSTREAM}:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # SPA fallback: client-side routing owns every other path.
+    location / {
+        try_files $uri /index.html;
+    }
+}
