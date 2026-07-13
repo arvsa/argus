@@ -5,7 +5,7 @@
 
 A network device monitoring system. It continuously pings devices, tracks up/down state in Redis, and streams live status changes to clients over WebSockets — deployable either as a single stack, or split across independent **zones** (e.g. one per building or site) that each run their own local monitoring and push aggregated, signed status snapshots to a central dashboard.
 
-This document covers what Argus is and how to get a single stack running. For local development workflows (including the full multi-zone client/server walkthrough) see **[development.md](development.md)**; for production deployment see **[deployment.md](deployment.md)**.
+This document covers what Argus is and how to get a single stack running (via Compose or Docker Swarm). For local development workflows (including the full multi-zone client/server walkthrough) see **[development.md](development.md)**; for production deployment see **[deployment.md](deployment.md)**.
 
 ## Architecture
 
@@ -84,6 +84,23 @@ The first run may take a minute while the backend waits for MySQL and runs migra
 
 Prefer to skip `scripts/run.sh` and run the underlying `docker compose` commands yourself? See **[development.md's Docker Compose basics](development.md#docker-compose-basics)**.
 
+## Docker Swarm Quick Start
+
+An alternative to the Quick Start above: run `argus-server` and one or more `argus-client` zones as independent Docker Swarm stacks behind one shared Traefik — closer to how staging/production are actually topology-separated, and lets you run multiple zones side by side locally. Can't run at the same time as the Compose stack above (they share ports 80/8090, and `traefik-public` needs a different network driver in each).
+
+```bash
+docker compose --profile client down   # if the Compose stack above is running
+./scripts/swarm/dev-setup.sh           # swarm init, Traefik + MinIO, build images, argus-server-1 + argus-client-1
+```
+
+Local URLs once running:
+
+- Server dashboard: http://dashboard.argus-server-1.localhost
+- Client dashboard: http://dashboard.argus-client-1.localhost
+- Traefik dashboard: http://localhost:8090
+
+Add another zone with `ARGUS_SWARM_DEV=1 ARGUS_SCHEME=http ./scripts/swarm/deploy.sh client 2`; tear everything down with `./scripts/swarm/teardown-dev.sh`. See **[swarm/README.md](swarm/README.md)** for the full picture — the edit/rebuild/redeploy dev loop (there's no hot reload here, unlike Compose above) and how to verify the client → MinIO → server pipeline end to end.
+
 ## Environment Variables
 
 All config is in `.env` (root); `.env.example` documents every variable, including the optional multi-zone client/server settings. Key ones to know:
@@ -151,13 +168,15 @@ Push to `main` → **Deploy to Staging** (gated on both test workflows passing f
 ```bash
 bash scripts/db-connect.sh       # MySQL shell inside the db container
 bash scripts/backend-connect.sh  # bash shell inside the backend container
+bash scripts/redis-connect.sh    # redis-cli inside the redis container
+bash scripts/pingsvc-connect.sh  # sh inside the pingsvc container
 ```
 
 Pass a Swarm stack name to target that zone/server instead of the Compose stack — e.g. `bash scripts/db-connect.sh argus-client-2` (see [swarm/README.md](swarm/README.md)).
 
 To subscribe to live ping events:
 ```bash
-docker compose exec redis redis-cli
+bash scripts/redis-connect.sh
 SUBSCRIBE pings:events
 ```
 
