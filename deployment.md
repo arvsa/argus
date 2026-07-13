@@ -17,111 +17,49 @@ But you have to configure a couple things first.
 
 ## Public Traefik
 
-We need a Traefik proxy to handle incoming connections and HTTPS certificates.
-
-You need to do these next steps only once.
-
-### Traefik Docker Compose
-
-* Create a remote directory to store your Traefik Docker Compose file:
+A single Traefik proxy handles incoming HTTP(S) and certificates for every stack on the box (one or more, each with its own domain). Set up once per server:
 
 ```bash
-mkdir -p /root/code/traefik-public/
-```
-
-Copy the Traefik Docker Compose file to your server. You could do it by running the command `rsync` in your local terminal:
-
-```bash
+# from your local machine: copy the Traefik compose file to the server
+mkdir -p /root/code/traefik-public/   # (on the server)
 rsync -a compose.traefik.yml root@your-server.example.com:/root/code/traefik-public/
-```
 
-### Traefik Public Network
-
-This Traefik will expect a Docker "public network" named `traefik-public` to communicate with your stack(s).
-
-This way, there will be a single public Traefik proxy that handles the communication (HTTP and HTTPS) with the outside world, and then behind that, you could have one or more stacks with different domains, even if they are on the same single server.
-
-To create a Docker "public network" named `traefik-public` run the following command in your remote server:
-
-```bash
+# on the server: the shared network every stack's containers join
 docker network create traefik-public
 ```
 
-### Traefik Environment Variables
-
-The Traefik Docker Compose file expects some environment variables to be set in your terminal before starting it. You can do it by running the following commands in your remote server.
-
-* Create the username for HTTP Basic Auth, e.g.:
+`compose.traefik.yml` reads these from the environment at startup:
 
 ```bash
 export USERNAME=admin
-```
-
-* Create an environment variable with the password for HTTP Basic Auth, e.g.:
-
-```bash
 export PASSWORD=changethis
-```
-
-* Use openssl to generate the "hashed" version of the password for HTTP Basic Auth and store it in an environment variable:
-
-```bash
-export HASHED_PASSWORD=$(openssl passwd -apr1 $PASSWORD)
-```
-
-To verify that the hashed password is correct, you can print it:
-
-```bash
-echo $HASHED_PASSWORD
-```
-
-* Create an environment variable with the domain name for your server, e.g.:
-
-```bash
+export HASHED_PASSWORD=$(openssl passwd -apr1 $PASSWORD)   # for HTTP Basic Auth on the Traefik dashboard
 export DOMAIN=argus.example.com
+export EMAIL=admin@example.com   # Let's Encrypt — must be a real, deliverable address
 ```
 
-* Create an environment variable with the email for Let's Encrypt, e.g.:
-
-```bash
-export EMAIL=admin@example.com
-```
-
-**Note**: you need to set a different email, an email `@example.com` won't work.
-
-### Start the Traefik Docker Compose
-
-Go to the directory where you copied the Traefik Docker Compose file in your remote server:
+Then start it:
 
 ```bash
 cd /root/code/traefik-public/
-```
-
-Now with the environment variables set and the `compose.traefik.yml` in place, you can start the Traefik Docker Compose running the following command:
-
-```bash
 docker compose -f compose.traefik.yml up -d
 ```
 
 ## Deploy Argus
 
-Now that you have Traefik in place you can deploy Argus with Docker Compose.
+Now that you have Traefik in place you can deploy Argus with Docker Compose (or skip ahead to [Continuous Deployment with GitHub Actions](#continuous-deployment-with-github-actions) to automate this).
 
-**Note**: You might want to jump ahead to the section about Continuous Deployment with GitHub Actions.
-
-## Copy the Code
+### Copy the Code
 
 ```bash
 rsync -av --filter=":- .gitignore" ./ root@your-server.example.com:/root/code/app/
 ```
 
-Note: `--filter=":- .gitignore"` tells `rsync` to use the same rules as git, ignore files ignored by git, like the Python virtual environment.
+`--filter=":- .gitignore"` makes `rsync` skip whatever git ignores (e.g. the Python virtual environment).
 
-## Environment Variables
+### Environment Variables
 
-You need to set some environment variables first.
-
-### Generate secret keys
+#### Generate secret keys
 
 Some environment variables in the `.env` file have a default value of `changethis`.
 
@@ -133,43 +71,14 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 
 Copy the content and use that as password / secret key. And run that again to generate another secure key.
 
-### Required Environment Variables
-
-Set the `ENVIRONMENT`, by default `local` (for development), but when deploying to a server you would put something like `staging` or `production`:
+#### Required Environment Variables
 
 ```bash
-export ENVIRONMENT=production
-```
-
-Set the `DOMAIN`, by default `localhost` (for development), but when deploying you would use your own domain, for example:
-
-```bash
-export DOMAIN=argus.example.com
-```
-
-Set the `MYSQL_ROOT_PASSWORD` to something different than `changethis`:
-
-```bash
-export MYSQL_ROOT_PASSWORD="changethis"
-```
-
-Set the `SECRET_KEY`, used to sign tokens:
-
-```bash
-export SECRET_KEY="changethis"
-```
-
-Note: you can use the Python command above to generate a secure secret key.
-
-Set the `FIRST_SUPER_USER_PASSWORD` to something different than `changethis`:
-
-```bash
-export FIRST_SUPERUSER_PASSWORD="changethis"
-```
-
-Set the `BACKEND_CORS_ORIGINS` to include your domain:
-
-```bash
+export ENVIRONMENT=production                 # local (dev default) / staging / production
+export DOMAIN=argus.example.com                # local default: localhost
+export MYSQL_ROOT_PASSWORD="<generated>"       # never leave as "changethis"
+export SECRET_KEY="<generated>"                # signs auth tokens — use the command above
+export FIRST_SUPERUSER_PASSWORD="<generated>"
 export BACKEND_CORS_ORIGINS="https://dashboard.${DOMAIN?Variable not set},https://api.${DOMAIN?Variable not set}"
 ```
 
@@ -192,13 +101,6 @@ You can set several other environment variables:
 * `ROLE`: `client` (default, full zone stack) or `server` (central argus-server — no Redis/pingsvc; combine with omitting the `client` compose profile, see `scripts/run.sh`).
 
 See [Multi-zone configuration](#multi-zone-configuration) below for the additional `ARGUS_*`/`S3_*` variables used by an `argus-client` zone or a central `argus-server`.
-
-## GitHub Actions Environment Variables
-
-There are some environment variables only used by GitHub Actions that you can configure:
-
-* `LATEST_CHANGES`: Used by the GitHub Action [latest-changes](https://github.com/tiangolo/latest-changes) to automatically add release notes based on the PRs merged. It's a personal access token, read the docs for details.
-* `SMOKESHOW_AUTH_KEY`: Used to handle and publish the code coverage using [Smokeshow](https://github.com/samuelcolvin/smokeshow), follow their instructions to create a (free) Smokeshow key.
 
 ### Deploy with Docker Compose
 
@@ -246,83 +148,32 @@ A server instance doesn't need `pingsvc` running at all — it only ever reads f
 
 To let the server verify a zone's signed snapshots (rather than leaving `signature_verified` as `null`/unknown for everything from that zone), register that zone's Ed25519 **public** key as a superuser via `PUT /api/v1/zones/{tenant_id}/{zone_id}/signing-key` with body `{"public_key_hex": "<64-hex chars>"}` (the same call rotates a key in place; `GET` on the same path reads back the registered key). Never transmit or store a zone's *private* key anywhere but that zone's own persistent volume — only the public half is ever registered.
 
-You can use GitHub Actions to deploy your project automatically. 😎
+## Continuous Deployment with GitHub Actions
 
-You can have multiple environment deployments.
-
-There are already two environments configured, `staging` and `production`. 🚀
+Two environments are already configured — `staging` and `production` — each deploying via a self-hosted GitHub Actions runner. Add more by using these as a starting point.
 
 ### Install GitHub Actions Runner
 
-* On your remote server, create a user for your GitHub Actions:
+1. Create a Docker-capable user for the runner, and install it under that user (following the [official self-hosted runner guide](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-a-repository)):
 
-```bash
-sudo adduser github
-```
+   ```bash
+   sudo adduser github
+   sudo usermod -aG docker github
+   sudo su - github
+   cd  # then follow the official guide's install steps
+   ```
 
-* Add Docker permissions to the `github` user:
+   When asked about labels, add one for the environment (e.g. `production`) — you can add more later.
 
-```bash
-sudo usermod -aG docker github
-```
+2. The guide's own "run" command only lasts for that shell session. Install it as a persistent service instead ([details](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service)):
 
-* Temporarily switch to the `github` user:
-
-```bash
-sudo su - github
-```
-
-* Go to the `github` user's home directory:
-
-```bash
-cd
-```
-
-* [Install a GitHub Action self-hosted runner following the official guide](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners#adding-a-self-hosted-runner-to-a-repository).
-
-* When asked about labels, add a label for the environment, e.g. `production`. You can also add labels later.
-
-After installing, the guide would tell you to run a command to start the runner. Nevertheless, it would stop once you terminate that process or if your local connection to your server is lost.
-
-To make sure it runs on startup and continues running, you can install it as a service. To do that, exit the `github` user and go back to the `root` user:
-
-```bash
-exit
-```
-
-After you do it, you will be on the previous user again. And you will be on the previous directory, belonging to that user.
-
-Before being able to go the `github` user directory, you need to become the `root` user (you might already be):
-
-```bash
-sudo su
-```
-
-* As the `root` user, go to the `actions-runner` directory inside of the `github` user's home directory:
-
-```bash
-cd /home/github/actions-runner
-```
-
-* Install the self-hosted runner as a service with the user `github`:
-
-```bash
-./svc.sh install github
-```
-
-* Start the service:
-
-```bash
-./svc.sh start
-```
-
-* Check the status of the service:
-
-```bash
-./svc.sh status
-```
-
-You can read more about it in the official guide: [Configuring the self-hosted runner application as a service](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service).
+   ```bash
+   exit                                    # back to root
+   cd /home/github/actions-runner
+   ./svc.sh install github
+   ./svc.sh start
+   ./svc.sh status                         # verify it's running
+   ```
 
 ### Set Secrets
 
@@ -349,35 +200,19 @@ The current GitHub Actions workflows expect these secrets:
 
 `deploy-staging.yml` and `deploy-production.yml` don't currently read any `ARGUS_*`/`S3_*` secrets — if you're deploying a zone or server that needs them, add them as additional repository secrets and reference them in those workflow files' `environment:` blocks (see [Multi-zone configuration](#multi-zone-configuration)).
 
-## GitHub Action Deployment Workflows
+### Triggers
 
-There are GitHub Action workflows in the `.github/workflows` directory already configured for deploying to the environments (GitHub Actions runners with the labels):
-
-* `staging`: after pushing (or merging) to the branch `master`.
+* `staging`: after pushing (or merging) to the branch `main`.
 * `production`: after publishing a release.
-
-If you need to add extra environments you could use those as a starting point.
 
 ## URLs
 
 Replace `argus.example.com` with your domain.
 
-### Main Traefik Dashboard
+| | Production | Staging |
+|---|---|---|
+| API docs | `https://api.argus.example.com/docs` | `https://api.staging.argus.example.com/docs` |
+| API base URL | `https://api.argus.example.com` | `https://api.staging.argus.example.com` |
+| Adminer | `https://adminer.argus.example.com` | `https://adminer.staging.argus.example.com` |
 
-Traefik UI: `https://traefik.argus.example.com`
-
-### Production
-
-Backend API docs: `https://api.argus.example.com/docs`
-
-Backend API base URL: `https://api.argus.example.com`
-
-Adminer: `https://adminer.argus.example.com`
-
-### Staging
-
-Backend API docs: `https://api.staging.argus.example.com/docs`
-
-Backend API base URL: `https://api.staging.argus.example.com`
-
-Adminer: `https://adminer.staging.argus.example.com`
+Traefik dashboard (shared, not per-environment): `https://traefik.argus.example.com`

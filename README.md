@@ -82,19 +82,7 @@ The first run may take a minute while the backend waits for MySQL and runs migra
 
 `client` mode brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
 
-<details>
-<summary>Manual step-by-step (without scripts/run.sh)</summary>
-
-```bash
-# Generate ping targets BEFORE starting Docker
-./pingsvc/generate_targets.sh
-
-# Start everything except redis/pingsvc (server), or add --profile client for a full zone
-docker compose watch backend        # backend + frontend + db + adminer
-docker compose --profile client up pingsvc -d   # add the ping pipeline (client only)
-```
-
-</details>
+Prefer to skip `scripts/run.sh` and run the underlying `docker compose` commands yourself? See **[development.md's Docker Compose basics](development.md#docker-compose-basics)**.
 
 ## Environment Variables
 

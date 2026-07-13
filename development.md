@@ -2,7 +2,7 @@
 
 This covers day-to-day local development: running each service outside Docker, lint/format/test commands, and — the main event — actually running a full `argus-client` + `argus-server` pair locally so you can watch the multi-zone pipeline work end-to-end in your own terminal.
 
-For a one-shot single-stack local setup, see the [Quick Start in README.md](README.md#quick-start). For production deployment, see [deployment.md](deployment.md).
+For a one-shot single-stack local setup, see the [Quick Start in README.md](README.md#quick-start). For production deployment, see [deployment.md](deployment.md). Everything below uses `docker compose`; to run the same multi-zone pipeline as independent Docker Swarm stacks instead (a closer match to how staging/production are actually topology-separated), see [swarm/README.md](swarm/README.md).
 
 ## Docker Compose basics
 
@@ -207,29 +207,18 @@ The exact `up_count`/`down_count` split depends on whether your Docker setup gra
 
 ### Bonus: prove the signature verification works
 
-Right now `signature_verified` isn't visible in the API response, and every ingested snapshot shows `None` (unknown) in the database, because the server has no registered public key for `zone-demo` yet — `verify_manifest` only ever trusts a key it already has on file (plan §4.4), never the manifest's self-reported one. Register the zone's key and watch the *next* ingested snapshot (not retroactively) verify:
+Right now `signature_verified` isn't visible in the API response, and every ingested snapshot shows `None` (unknown) in the database, because the server has no registered public key for `zone-demo` yet — `verify_manifest` only ever trusts a key it already has on file (plan §4.4), never the manifest's self-reported one. Register the zone's key via the API ([full reference in deployment.md](deployment.md#deploying-the-server-argus-server)) and watch the *next* ingested snapshot (not retroactively) verify:
 
 ```bash
 # Pull the zone's signing key's public half out of the running pingsvc container
-docker compose exec pingsvc cat /var/lib/argus/signing.key | xxd -p | tr -d '\n' > /tmp/key.hex
-PUBKEY=$(tail -c 64 /tmp/key.hex)   # last 32 bytes = the public key half
+PUBKEY=$(docker compose exec pingsvc cat /var/lib/argus/signing.key | xxd -p | tr -d '\n' | tail -c 64)
 
-# In the server's terminal/venv:
-uv run python3 -c "
-from sqlmodel import Session
-from app.core.db import engine
-from app import crud
-from app.models import ZoneSigningKeyCreate
-
-with Session(engine) as session:
-    crud.create_zone_signing_key(
-        session=session,
-        key_create=ZoneSigningKeyCreate(tenant_id='acme-corp', zone_id='zone-demo', public_key_hex='$PUBKEY'),
-    )
-"
+curl -s -X PUT "http://localhost:8001/api/v1/zones/acme-corp/zone-demo/signing-key" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d "{\"public_key_hex\": \"$PUBKEY\"}"
 ```
 
-Wait for one more ingestion cycle, then check:
+Wait for one more ingestion cycle, then check (no REST endpoint exposes `signature_verified` per-snapshot yet, so this checks the DB directly):
 
 ```bash
 uv run python3 -c "
@@ -256,11 +245,7 @@ with Session(engine) as session:
 docker compose down -v --remove-orphans   # tears down db/redis/minio/backend/pingsvc + volumes
 ```
 
-## Docker Compose files and env vars
-
-`compose.yml` has the whole stack's configuration; `compose.override.yml` layers local-dev-only overrides on top (bind-mounted source, published ports, Mailcatcher, the `minio` service used above). Both read `.env` for values injected as environment variables into containers. After changing `.env`, restart the affected service(s).
-
-`.env` contains your local secrets/passwords — depending on your workflow you may want to keep it out of git (it already is, via `.gitignore`) and instead inject each variable through your CI/CD system's secrets.
+Both compose files read `.env` for values injected as environment variables into containers — after changing it, restart the affected service(s). `.env` holds your local secrets/passwords and is already `.gitignore`d; inject each variable through your CI/CD system's secrets instead for staging/production.
 
 ## Testing with a custom local domain
 

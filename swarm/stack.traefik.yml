@@ -1,0 +1,69 @@
+# Swarm-mode public Traefik (production): the swarm counterpart of
+# compose.traefik.yml. One instance per swarm, deployed once, routes every
+# argus-<role>-<#> stack on the traefik-public overlay by Host rule.
+#
+#   docker network create --driver=overlay traefik-public
+#   export DOMAIN=... EMAIL=... USERNAME=... HASHED_PASSWORD=...
+#   docker stack deploy -c swarm/stack.traefik.yml traefik
+#
+# Swarm-isms vs compose.traefik.yml: the provider is `swarm` (reads
+# deploy.labels from *services*, not container labels), labels moved under
+# deploy.labels, and the service is pinned to a manager node because it
+# needs the docker socket.
+
+services:
+  traefik:
+    image: traefik:v3.7
+    ports:
+      - 80:80
+      - 443:443
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-public-certificates:/certificates
+    command:
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      # Attach routed services via this shared overlay network
+      - --providers.swarm.network=traefik-public
+      # Only route services that opted in with this label
+      - --providers.swarm.constraints=Label(`traefik.constraint-label`, `traefik-public`)
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --certificatesresolvers.le.acme.email=${EMAIL?Variable not set}
+      - --certificatesresolvers.le.acme.storage=/certificates/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --accesslog
+      - --log
+      - --api
+    networks:
+      - traefik-public
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        # The https-redirect middleware every app stack's http routers
+        # reference -- defined once, here.
+        - traefik.http.middlewares.https-redirect.redirectscheme.scheme=https
+        - traefik.http.middlewares.https-redirect.redirectscheme.permanent=true
+        # Dashboard at traefik.${DOMAIN}, basic-auth protected
+        - traefik.http.middlewares.admin-auth.basicauth.users=${USERNAME?Variable not set}:${HASHED_PASSWORD?Variable not set}
+        - traefik.http.services.traefik-dashboard.loadbalancer.server.port=8080
+        - traefik.http.routers.traefik-dashboard-http.entrypoints=http
+        - traefik.http.routers.traefik-dashboard-http.rule=Host(`traefik.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.traefik-dashboard-http.middlewares=https-redirect
+        - traefik.http.routers.traefik-dashboard-https.entrypoints=https
+        - traefik.http.routers.traefik-dashboard-https.rule=Host(`traefik.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.traefik-dashboard-https.tls=true
+        - traefik.http.routers.traefik-dashboard-https.tls.certresolver=le
+        - traefik.http.routers.traefik-dashboard-https.service=api@internal
+        - traefik.http.routers.traefik-dashboard-https.middlewares=admin-auth
+
+volumes:
+  traefik-public-certificates:
+
+networks:
+  traefik-public:
+    external: true

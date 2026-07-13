@@ -1,0 +1,129 @@
+# Swarm stack: central argus-server (deploy with scripts/swarm/deploy.sh
+# server <#> -- do not `docker compose up` this file).
+#
+# Differences from compose.yml are deliberate swarm-isms: no build: (images
+# come prebuilt from scripts/swarm/build.sh), no profiles/depends_on
+# conditions (swarm has neither; startup ordering converges via restart
+# policies + healthchecks), and Traefik labels live under deploy.labels
+# (swarm-mode Traefik never sees container labels). Keep service env in
+# sync with compose.yml when it changes.
+
+services:
+
+  db:
+    image: mysql
+    healthcheck:
+      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQL_ROOT_PASSWORD}']
+      interval: 10s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    volumes:
+      - app-db-data:/var/lib/mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
+      - MYSQL_DATABASE=${MYSQL_DATABASE?Variable not set}
+
+  # One-shot migrations + initial data. condition: none = runs once per
+  # deployed spec (a new TAG re-runs it); an exit 0 task is left as
+  # "Complete" in `docker stack ps`, which is the expected steady state.
+  prestart:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}'
+    command: bash scripts/prestart.sh
+    deploy:
+      restart_policy:
+        condition: none
+    environment:
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_HOST=${FRONTEND_HOST?Variable not set}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - SECRET_KEY=${SECRET_KEY?Variable not set}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - PROJECT_NAME=${PROJECT_NAME:-argus}
+      - MYSQL_SERVER=db
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+    volumes:
+      # Single-node bind mount (see plan/swarm-orchestration-v1.md).
+      # Optional -- an absent hierarchy.yaml becomes an empty dir, which
+      # seed_hierarchy.py treats as "not configured", same as compose.yml.
+      - ${ARGUS_REPO_DIR?Variable not set}/hierarchy.yaml:/app/backend/hierarchy.yaml:ro
+
+  backend:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG:-latest}'
+    networks:
+      - traefik-public
+      - default
+    environment:
+      - DOMAIN=${DOMAIN}
+      - FRONTEND_HOST=${FRONTEND_HOST?Variable not set}
+      - ENVIRONMENT=${ENVIRONMENT}
+      - BACKEND_CORS_ORIGINS=${BACKEND_CORS_ORIGINS}
+      - SECRET_KEY=${SECRET_KEY?Variable not set}
+      - FIRST_SUPERUSER=${FIRST_SUPERUSER?Variable not set}
+      - FIRST_SUPERUSER_PASSWORD=${FIRST_SUPERUSER_PASSWORD?Variable not set}
+      - PROJECT_NAME=${PROJECT_NAME:-argus}
+      - MYSQL_SERVER=db
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - ROLE=server
+      # Ingestion is the whole point of this stack; deploy.sh guarantees
+      # S3_BUCKET is set (MinIO defaults in dev, real S3 in production).
+      - S3_BUCKET=${S3_BUCKET?Variable not set}
+      - S3_REGION=${S3_REGION:-us-east-1}
+      - S3_ENDPOINT=${S3_ENDPOINT:-}
+      - S3_ACCESS_KEY=${S3_ACCESS_KEY:-}
+      - S3_SECRET_KEY=${S3_SECRET_KEY:-}
+      - INGESTION_INTERVAL_SECONDS=${INGESTION_INTERVAL_SECONDS:-60}
+      - STALENESS_THRESHOLD_SECONDS=${STALENESS_THRESHOLD_SECONDS:-120}
+      - SNAPSHOT_RETENTION_DAYS=${SNAPSHOT_RETENTION_DAYS:-7}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        - traefik.http.services.${STACK_NAME?Variable not set}-backend.loadbalancer.server.port=8000
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.rule=Host(`api.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.entrypoints=http
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.middlewares=https-redirect
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.rule=Host(`api.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.entrypoints=https
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls=true
+        - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls.certresolver=le
+
+  # Always the prod nginx image in swarm (its /api proxy reaches this
+  # stack's backend by short service name on the stack-scoped network).
+  frontend:
+    image: '${DOCKER_IMAGE_FRONTEND?Variable not set}:${TAG:-latest}'
+    networks:
+      - traefik-public
+      - default
+    deploy:
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=80
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.entrypoints=http
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.middlewares=https-redirect
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.entrypoints=https
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls=true
+        - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls.certresolver=le
+
+volumes:
+  app-db-data:
+
+networks:
+  traefik-public:
+    external: true
