@@ -30,6 +30,13 @@ type Signer struct {
 	priv ed25519.PrivateKey
 }
 
+// PublicKeyHex returns the hex-encoded public half of the signer's
+// keypair -- what an operator registers with argus-server so it can
+// verify this zone's pushed snapshots (see verifyManifest).
+func (s *Signer) PublicKeyHex() string {
+	return hex.EncodeToString(s.priv.Public().(ed25519.PublicKey))
+}
+
 // signManifest builds a signed Manifest for data. ts is taken from the
 // caller (the snapshot's own embedded timestamp) rather than wall-clock at
 // signing time, so the sequence a verifier checks against matches the

@@ -4,10 +4,18 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ZonesPage } from "@/pages/Zones";
 import * as zonesApi from "@/api/zones";
+import * as appConfigApi from "@/api/appConfig";
+import * as zoneIdentityApi from "@/api/zoneIdentity";
 import type { ZoneSummary } from "@/api/zones";
 
 vi.mock("@/api/zones", () => ({
   getZoneSummaries: vi.fn(),
+}));
+vi.mock("@/api/appConfig", () => ({
+  getAppConfig: vi.fn(),
+}));
+vi.mock("@/api/zoneIdentity", () => ({
+  getZoneIdentity: vi.fn(),
 }));
 
 function zone(overrides: Partial<ZoneSummary> = {}): ZoneSummary {
@@ -42,14 +50,32 @@ function renderPage() {
 describe("ZonesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default to "server" -- most of these tests are about the zones list
+    // itself, which is a server-role concern; the client-role empty-state
+    // swap gets its own tests below.
+    vi.mocked(appConfigApi.getAppConfig).mockResolvedValue({ role: "server" });
   });
 
-  it("shows the not-configured empty state when there are no zones -- not an error", async () => {
+  it("shows the not-configured empty state when there are no zones on a server -- not an error", async () => {
     vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
     renderPage();
 
     expect(await screen.findByText(/not configured for this deployment/i)).toBeInTheDocument();
     expect(screen.queryByText(/couldn't load/i)).not.toBeInTheDocument();
+  });
+
+  it("shows this zone's identity instead of the generic empty state on a client", async () => {
+    vi.mocked(appConfigApi.getAppConfig).mockResolvedValue({ role: "client" });
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(zoneIdentityApi.getZoneIdentity).mockResolvedValue({
+      zone_id: "zone-1",
+      tenant_id: "acme-corp",
+      public_key_hex: "ab".repeat(32),
+    });
+    renderPage();
+
+    expect(await screen.findByText("zone-1")).toBeInTheDocument();
+    expect(screen.queryByText(/not configured for this deployment/i)).not.toBeInTheDocument();
   });
 
   it("renders zone summaries once loaded", async () => {

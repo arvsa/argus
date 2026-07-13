@@ -5,7 +5,9 @@ import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { ZoneEmptyState } from "@/components/ZoneEmptyState";
+import { ZoneIdentityCard } from "@/components/ZoneIdentityCard";
 import { NodeStatusBadge } from "@/components/NodeStatusBadge";
+import { useAppConfig } from "@/hooks/useAppConfig";
 import { cn } from "@/lib/utils";
 
 function formatLastPulled(ts: string | null): string {
@@ -14,6 +16,7 @@ function formatLastPulled(ts: string | null): string {
 
 export function ZonesPage() {
   const navigate = useNavigate();
+  const { role } = useAppConfig();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["zones"],
     queryFn: getZoneSummaries,
@@ -27,7 +30,11 @@ export function ZonesPage() {
       {isError && <ErrorState message="Couldn't load zones." onRetry={() => refetch()} />}
 
       {data && (data.data.length === 0 ? (
-        <ZoneEmptyState />
+        // A client-role backend's own /zones/summary is always empty (it
+        // tracks *other* zones pushing in, not itself) -- so this is
+        // exactly where an operator setting up multi-zone needs to find
+        // their own zone's connection info instead of a dead end.
+        role === "client" ? <ZoneIdentityCard /> : <ZoneEmptyState />
       ) : (
         <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
           <div className="overflow-x-auto">
