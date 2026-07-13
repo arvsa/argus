@@ -1,0 +1,42 @@
+# Swarm stack: DEV-ONLY S3-compatible object storage, the swarm counterpart
+# of compose.override.yml's minio service (deployed by
+# scripts/swarm/dev-setup.sh; production uses real S3 and never deploys
+# this). The `minio` alias on the shared traefik-public overlay is what
+# lets every argus-<role>-<#> stack reach it cross-stack at
+# http://minio:9000 -- the same URL the compose walkthrough uses.
+
+services:
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    networks:
+      traefik-public:
+        aliases:
+          - minio
+
+  # One-shot bucket bootstrap (MinIO has no default buckets); condition:
+  # none leaves it as a "Complete" task after exit 0, like prestart.
+  createbucket:
+    image: minio/mc
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}; do sleep 2; done &&
+      mc mb --ignore-existing local/${ARGUS_DEV_BUCKET:-argus-metrics}
+      "
+    networks:
+      - traefik-public
+    deploy:
+      restart_policy:
+        condition: none
+
+volumes:
+  minio-data:
+
+networks:
+  traefik-public:
+    external: true

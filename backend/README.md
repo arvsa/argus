@@ -1,9 +1,10 @@
 # Backend (FastAPI)
 
-REST API + WebSocket server for Argus. Serves the device hierarchy (Campus →
-Building → Room → Device), auth, and live ping status over `/ws/pings`.
-MySQL via SQLModel/Alembic; subscribes to Redis pub/sub for real-time state
-changes published by `pingsvc`.
+REST API + WebSocket server for Argus. Serves the device hierarchy (an
+admin-configurable NodeType/Node tree — see [../hierarchy.md](../hierarchy.md)),
+auth, and live ping status over `/ws/pings`. MySQL via SQLModel/Alembic;
+subscribes to Redis pub/sub for real-time state changes published by
+`pingsvc`.
 
 See the [root README](../README.md) for how this service fits into the full
 stack, and [../CLAUDE.md](../CLAUDE.md) for architecture notes.
@@ -82,8 +83,8 @@ pytest tests/api/routes/test_login.py::test_login_access_token_correct
 
 Test layout:
 
-- `tests/api/routes/` — endpoint tests (devices, buildings, campuses, rooms,
-  hierarchy, pings, stats, users, login, permissions)
+- `tests/api/routes/` — endpoint tests (devices, node types, nodes, node
+  stats, pings, stats, users, login, permissions, zones)
 - `tests/crud/` — CRUD-layer unit tests
 - `tests/scripts/` — tests for `backend_pre_start.py` / `tests_pre_start.py`
 - `tests/utils/` — shared fixtures/helpers (e.g. `hierarchy.py`, `user.py`)

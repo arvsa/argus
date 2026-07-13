@@ -31,10 +31,30 @@ ping pipeline.
 -batch // redis batch size. def 500
 -batch-flush-ms // redis batch flush in milliseconds. def 200
 -metrics-addr // address to serve /metrics on. def :9090
-
+-role // pingsvc | exporter | both (ARGUS_ROLE). def pingsvc
 ```
 
 If no targets file is provided, it defaults to pinging `8.8.8.8` and `1.1.1.1`.
+
+## Exporter / `argus-client` role
+
+`-role`/`ARGUS_ROLE` gates which subsystems run in this process:
+
+- `pingsvc` (default) — just the ping pipeline above.
+- `exporter` — just the independent goroutine that periodically signs and
+  pushes an aggregated snapshot to S3-compatible object storage.
+- `both` — both at once; this is what makes a deployment a full
+  `argus-client` zone.
+
+`both`/`exporter` need `ARGUS_ZONE_ID`, `ARGUS_TENANT_ID`, `ARGUS_S3_BUCKET`
+(+ endpoint/keys for non-AWS S3), and `ARGUS_SIGNING_KEY_PATH` pointed at a
+persistent volume — full variable reference in
+[../deployment.md](../deployment.md#deploying-a-zone-argus-client). Real
+ICMP also needs the `NET_RAW`/`NET_ADMIN` capabilities added to the
+container (`cap_add:` in `compose.yml`/`swarm/stack.client.yml`) — without
+them every device reports down. See
+[../development.md](../development.md#running-a-full-argus-client--argus-server-locally)
+for a full local walkthrough of both roles talking to each other.
 
 ## Development
 

@@ -1,0 +1,14 @@
+# Repo root is the build context for backend/Dockerfile and
+# frontend/Dockerfile (see compose.yml) -- without these exclusions every
+# image build ships ~270 MB of dependencies and git history to the daemon,
+# which is slow at best and flaky at worst. Nothing here is COPY'd by any
+# Dockerfile: images install their own deps (uv sync / npm ci).
+.git
+**/node_modules
+backend/.venv
+**/.venv
+backend/htmlcov
+frontend/dist
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache

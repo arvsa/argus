@@ -1,0 +1,51 @@
+# Swarm-mode Traefik for LOCAL DEVELOPMENT (deployed by
+# scripts/swarm/dev-setup.sh). HTTP-only: no Let's Encrypt (nothing to
+# issue for *.localhost), and `https-redirect` is redefined as a dummy
+# no-op middleware -- the same trick compose.override.yml uses -- so the
+# app stacks' http routers serve plainly instead of redirecting to a
+# TLS endpoint that isn't there. App stacks' https routers will log
+# "nonexistent certificate resolver" errors; that's expected in dev.
+
+services:
+  traefik:
+    image: traefik:v3.7
+    ports:
+      - 80:80
+      # Insecure dashboard/API, mirroring compose.override.yml's 8090
+      - 8090:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - --providers.swarm.endpoint=unix:///var/run/docker.sock
+      - --providers.swarm.exposedbydefault=false
+      - --providers.swarm.network=traefik-public
+      - --providers.swarm.constraints=Label(`traefik.constraint-label`, `traefik-public`)
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --accesslog
+      - --log
+      - --log.level=DEBUG
+      - --api
+      - --api.insecure=true
+    networks:
+      - traefik-public
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - traefik.enable=true
+        - traefik.constraint-label=traefik-public
+        # Dummy https-redirect that doesn't redirect (dev only)
+        - traefik.http.middlewares.https-redirect.contenttype.autodetect=false
+        # Without an explicit port, the swarm provider can't build a config
+        # unit for this container ("port is missing") and silently drops
+        # ALL of its labels -- including the middleware above -- which
+        # leaves every app stack's *-http router disabled. 8080 is already
+        # published (see ports: above); this label doesn't add a route,
+        # it just gives the provider something to anchor the labels to.
+        - traefik.http.services.traefik-dashboard.loadbalancer.server.port=8080
+
+networks:
+  traefik-public:
+    external: true
