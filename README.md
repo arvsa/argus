@@ -153,6 +153,8 @@ bash scripts/db-connect.sh       # MySQL shell inside the db container
 bash scripts/backend-connect.sh  # bash shell inside the backend container
 ```
 
+Pass a Swarm stack name to target that zone/server instead of the Compose stack — e.g. `bash scripts/db-connect.sh argus-client-2` (see [swarm/README.md](swarm/README.md)).
+
 To subscribe to live ping events:
 ```bash
 docker compose exec redis redis-cli

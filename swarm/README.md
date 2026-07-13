@@ -18,6 +18,23 @@ for the full design rationale (why separate stack files instead of reusing
 | `stack.traefik.yml` | production Traefik (Let's Encrypt, basic-auth dashboard) |
 | `stack.minio.yml` | dev-only S3-compatible storage, shared across every stack |
 
+**Why the frontend needs `BACKEND_UPSTREAM`:** every zone's frontend joins
+the same external `traefik-public` overlay network (so Traefik can route
+`dashboard.<zone>.*`/`api.<zone>.*` to it), and every zone's backend joins
+that same shared network too (so Traefik can route directly to it for
+`api.<zone>.*`). That means the bare Compose DNS name `backend` — which
+`frontend/nginx.conf.template`'s `/api/` reverse proxy uses by default —
+is ambiguous once more than one stack is deployed: it previously resolved
+non-deterministically to *some* stack's backend, not necessarily its own,
+so one zone's dashboard could silently authenticate against a different
+zone's database. `swarm/stack.client.yml`/`stack.server.yml` set
+`BACKEND_UPSTREAM=<stack-name>_backend` on the frontend service — Swarm's
+own full service name, which is globally unique regardless of shared
+networks — to pin each frontend to its own backend. Compose is unaffected
+(its `traefik-public` is a private per-project network, so `backend` is
+never ambiguous there), which is why the image's default is still the bare
+`backend`.
+
 Deployed/managed via [`../scripts/swarm/`](../scripts/swarm/) — `build.sh`,
 `deploy.sh`, `remove.sh`, `dev-setup.sh`, `teardown-dev.sh`.
 
