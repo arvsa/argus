@@ -84,6 +84,7 @@ function AddZoneForm() {
 export function ZonesPage() {
   const navigate = useNavigate();
   const { role } = useAppConfig();
+  const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["zones"],
     queryFn: getZoneSummaries,
