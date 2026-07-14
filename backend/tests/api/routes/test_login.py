@@ -1,3 +1,5 @@
+import uuid
+from datetime import timedelta
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -5,7 +7,7 @@ from pwdlib.hashers.bcrypt import BcryptHasher
 from sqlmodel import Session
 
 from app.core.config import settings
-from app.core.security import get_password_hash, verify_password
+from app.core.security import create_access_token, get_password_hash, verify_password
 from app.crud import create_user
 from app.models import User, UserCreate
 from app.utils import generate_password_reset_token
@@ -44,6 +46,22 @@ def test_use_access_token(
     result = r.json()
     assert r.status_code == 200
     assert "email" in result
+
+
+def test_use_access_token_for_nonexistent_user(client: TestClient) -> None:
+    # A well-signed token whose subject no longer resolves to a user (e.g.
+    # the account was deleted, or a dev DB was reset independently of a
+    # client still holding an old token) must be treated the same as an
+    # invalid/expired one -- 401, not 404 -- so the frontend's response
+    # interceptor forces a logout instead of leaving the client stuck with
+    # a token that every request 404s on.
+    token = create_access_token(str(uuid.uuid4()), expires_delta=timedelta(minutes=30))
+    r = client.post(
+        f"{settings.API_V1_STR}/login/test-token",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 401
+    assert r.json()["detail"] == "User not found"
 
 
 def test_recovery_password(
