@@ -160,6 +160,79 @@ def test_upsert_zone_summary_different_zones_get_different_rows(db: Session) -> 
     assert a.id != b.id
 
 
+# ── delete_zone ────────────────────────────────────────────────────────
+
+def test_delete_zone_removes_summary(db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-1",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+
+    assert crud.delete_zone(session=db, tenant_id=tenant_id, zone_id="zone-1") is True
+    assert crud.get_zone_summary(session=db, tenant_id=tenant_id, zone_id="zone-1") is None
+
+
+def test_delete_zone_removes_client_snapshots(db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-1",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    crud.create_client_snapshot(
+        session=db,
+        snapshot_create=_snapshot_create(
+            tenant_id, "zone-1", f"{tenant_id}/zone-1/2026/01/01/00/1000.json.gz"
+        ),
+    )
+
+    crud.delete_zone(session=db, tenant_id=tenant_id, zone_id="zone-1")
+
+    assert (
+        crud.get_latest_client_snapshot(session=db, tenant_id=tenant_id, zone_id="zone-1")
+        is None
+    )
+
+
+def test_delete_zone_removes_signing_key(db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-1",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    crud.create_zone_signing_key(
+        session=db,
+        key_create=ZoneSigningKeyCreate(
+            tenant_id=tenant_id, zone_id="zone-1", public_key_hex="ab" * 32
+        ),
+    )
+
+    crud.delete_zone(session=db, tenant_id=tenant_id, zone_id="zone-1")
+
+    assert crud.get_zone_signing_key(session=db, tenant_id=tenant_id, zone_id="zone-1") is None
+
+
+def test_delete_zone_does_not_touch_other_zones(db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-1",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-2",
+        up_count=2, down_count=0, last_snapshot_ts=1000,
+    )
+
+    crud.delete_zone(session=db, tenant_id=tenant_id, zone_id="zone-1")
+
+    assert crud.get_zone_summary(session=db, tenant_id=tenant_id, zone_id="zone-2") is not None
+
+
+def test_delete_zone_returns_false_when_zone_unknown(db: Session) -> None:
+    tenant_id = random_lower_string()
+    assert crud.delete_zone(session=db, tenant_id=tenant_id, zone_id="zone-1") is False
+
+
 # ── ZoneSigningKey ───────────────────────────────────────────────────────
 
 def test_create_zone_signing_key(db: Session) -> None:

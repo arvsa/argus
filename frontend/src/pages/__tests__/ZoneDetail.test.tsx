@@ -15,6 +15,7 @@ vi.mock("@/api/zones", () => ({
   updateZoneDisplayName: vi.fn(),
   getZoneSigningKey: vi.fn(),
   registerZoneSigningKey: vi.fn(),
+  deleteZone: vi.fn(),
 }));
 
 function snapshot(overrides: Partial<ClientSnapshot> = {}): ClientSnapshot {
@@ -66,6 +67,7 @@ function renderPage() {
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={["/zones/acme/hq"]}>
         <Routes>
+          <Route path="/zones" element={<div>Zones List Stub</div>} />
           <Route path="/zones/:tenantId/:zoneId" element={<ZoneDetailPage />} />
         </Routes>
       </MemoryRouter>
@@ -135,7 +137,9 @@ describe("ZoneDetailPage", () => {
     );
     renderPage();
 
-    expect(await screen.findByText(/no signing key registered/i)).toBeInTheDocument();
+    expect(await screen.findByTestId("signature-badge")).toHaveTextContent(
+      /no signing key registered/i
+    );
   });
 
   it("renders a labeled empty state when the zone has no snapshots (404) -- not an error", async () => {
@@ -144,6 +148,17 @@ describe("ZoneDetailPage", () => {
 
     expect(await screen.findByText(/no snapshots ingested/i)).toBeInTheDocument();
     expect(screen.queryByText(/couldn't load/i)).not.toBeInTheDocument();
+  });
+
+  it("still shows the signing key panel for a zone with no snapshot yet -- pre-registration", async () => {
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockRejectedValue(http404());
+    renderPage();
+
+    expect(await screen.findByText(/no snapshots ingested/i)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /signing key/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: /public key/i })
+    ).toBeInTheDocument();
   });
 
   it("renders an error state on a non-404 failure", async () => {
@@ -248,5 +263,28 @@ describe("ZoneDetailPage", () => {
     await userEvent.type(screen.getByPlaceholderText(/filter/i), "10.9.9.9");
     expect(within(table).getAllByRole("row")).toHaveLength(1);
     expect(screen.queryByText(/showing 200/i)).not.toBeInTheDocument();
+  });
+
+  // ── Delete zone ──────────────────────────────────────────────────────
+
+  it("lets a superuser delete the zone and navigates back to the list", async () => {
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockResolvedValue(snapshot());
+    vi.mocked(zonesApi.deleteZone).mockResolvedValue(undefined);
+    renderPage();
+
+    await userEvent.click(await screen.findByRole("button", { name: /delete zone/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /^delete$/i }));
+
+    expect(zonesApi.deleteZone).toHaveBeenCalledWith("acme", "hq");
+    expect(await screen.findByText("Zones List Stub")).toBeInTheDocument();
+  });
+
+  it("hides the delete control from non-superusers", async () => {
+    setUser(false);
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockResolvedValue(snapshot());
+    renderPage();
+
+    expect(await screen.findByText("10.0.0.1")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete zone/i })).not.toBeInTheDocument();
   });
 });

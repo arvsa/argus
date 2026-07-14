@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { isAxiosError } from "axios";
-import { Inbox, KeyRound, Pencil } from "lucide-react";
+import { Inbox, KeyRound, Pencil, Trash2 } from "lucide-react";
 import {
+  deleteZone,
   getLatestZoneSnapshot,
   getZoneSigningKey,
   getZoneSummaries,
@@ -15,7 +16,9 @@ import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { StatusBadge } from "@/components/StatusBadge";
 import { NodeStatusBadge } from "@/components/NodeStatusBadge";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useAuthStore } from "@/store/auth";
+import { useApiErrorToast } from "@/hooks/useErrorToast";
 import { cn } from "@/lib/utils";
 
 function is404(err: unknown): boolean {
@@ -41,7 +44,13 @@ function SignatureBadge({ verified }: { verified: boolean | null }) {
         ? { label: "Signature INVALID", cls: "bg-red-50 text-red-700" }
         : { label: "No signing key registered", cls: "bg-gray-100 text-gray-600" };
   return (
-    <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", config.cls)}>
+    // testid: SigningKeyPanel's own "no key registered" copy overlaps this
+    // badge's text ("no signing key registered" is a substring of both),
+    // so a plain text query can't reliably target this one specifically.
+    <span
+      data-testid="signature-badge"
+      className={cn("rounded-full px-2 py-0.5 text-xs font-medium", config.cls)}
+    >
       {config.label}
     </span>
   );
@@ -122,6 +131,43 @@ function DisplayNameEditor({
         <span className="text-xs text-red-600">Couldn't save the name.</span>
       )}
     </form>
+  );
+}
+
+// Permanently removes the zone (summary, every snapshot, its signing
+// key -- see backend crud.delete_zone) and returns to the zones list.
+// Superuser-only, same gating as rename/signing-key registration above.
+function DeleteZoneButton({ tenantId, zoneId }: { tenantId: string; zoneId: string }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const errorToast = useApiErrorToast();
+
+  const mutation = useMutation({
+    mutationFn: () => deleteZone(tenantId, zoneId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["zones"] });
+      navigate("/zones");
+    },
+    onError: errorToast("Couldn't delete zone"),
+  });
+
+  return (
+    <ConfirmDialog
+      trigger={
+        <button
+          aria-label="Delete zone"
+          title="Delete zone"
+          className="flex items-center gap-1.5 rounded-lg p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-600"
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      }
+      title={`Delete "${zoneId}"?`}
+      description="This permanently removes its summary, every snapshot it ever pushed, and its registered signing key. This cannot be undone."
+      confirmLabel="Delete"
+      destructive
+      onConfirm={() => mutation.mutate()}
+    />
   );
 }
 
@@ -274,6 +320,9 @@ export function ZoneDetailPage() {
             currentName={summary?.display_name ?? null}
           />
         )}
+        {isSuperuser && tenantId && zoneId && (
+          <DeleteZoneButton tenantId={tenantId} zoneId={zoneId} />
+        )}
       </div>
 
       {isLoading && <PageSpinner />}
@@ -294,6 +343,12 @@ export function ZoneDetailPage() {
         <ErrorState message="Couldn't load the zone snapshot." onRetry={() => refetch()} />
       )}
 
+      {/* Independent of whether a snapshot has ever been pulled (data
+          above) -- an operator using Add Zone to reach this page ahead
+          of the zone's first push still needs to pre-register its
+          signing key, not just after ingestion has already started. */}
+      {tenantId && zoneId && <SigningKeyPanel tenantId={tenantId} zoneId={zoneId} />}
+
       {data && (
         <>
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm text-gray-600">
@@ -313,8 +368,6 @@ export function ZoneDetailPage() {
               Pulled: {data.pulled_at ? new Date(data.pulled_at).toLocaleString() : "—"}
             </span>
           </div>
-
-          {tenantId && zoneId && <SigningKeyPanel tenantId={tenantId} zoneId={zoneId} />}
 
           <div className="grid gap-6 lg:grid-cols-2">
             <section className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">

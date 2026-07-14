@@ -1,19 +1,87 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { Plus } from "lucide-react";
 import { getZoneSummaries } from "@/api/zones";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { ZoneEmptyState } from "@/components/ZoneEmptyState";
 import { NodeStatusBadge } from "@/components/NodeStatusBadge";
+import { useAuthStore } from "@/store/auth";
 import { cn } from "@/lib/utils";
 
 function formatLastPulled(ts: string | null): string {
   return ts ? new Date(ts).toLocaleString() : "never";
 }
 
+// Zones only otherwise appear as a side effect of ingestion (a zone's
+// first pushed snapshot creates its row) -- there's no "create a zone"
+// concept to back a real form. This just navigates to a zone's detail
+// page ahead of its first push, so an operator can pre-register its
+// signing key (ZoneDetail already renders a "no snapshot yet" empty
+// state plus the signing-key panel for a zone with no ClientSnapshot).
+function AddZoneForm() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [tenantId, setTenantId] = useState("");
+  const [zoneId, setZoneId] = useState("");
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add zone
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        navigate(`/zones/${encodeURIComponent(tenantId.trim())}/${encodeURIComponent(zoneId.trim())}`);
+      }}
+    >
+      <input
+        aria-label="Tenant ID"
+        value={tenantId}
+        onChange={(e) => setTenantId(e.target.value)}
+        placeholder="Tenant ID"
+        autoFocus
+        className="w-32 rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+      />
+      <input
+        aria-label="Zone ID"
+        value={zoneId}
+        onChange={(e) => setZoneId(e.target.value)}
+        placeholder="Zone ID"
+        className="w-32 rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+      />
+      <button
+        type="submit"
+        disabled={!tenantId.trim() || !zoneId.trim()}
+        className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+      >
+        Go
+      </button>
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        className="rounded-lg px-2 py-1.5 text-sm text-gray-500 hover:bg-gray-100"
+      >
+        Cancel
+      </button>
+    </form>
+  );
+}
+
 export function ZonesPage() {
   const navigate = useNavigate();
+  const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["zones"],
     queryFn: getZoneSummaries,
@@ -21,7 +89,11 @@ export function ZonesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Zones" description="Remote zone health (multi-zone deployments only)" />
+      <PageHeader
+        title="Zones"
+        description="Remote zone health (multi-zone deployments only)"
+        action={isSuperuser ? <AddZoneForm /> : undefined}
+      />
 
       {isLoading && <PageSpinner />}
       {isError && <ErrorState message="Couldn't load zones." onRetry={() => refetch()} />}

@@ -336,6 +336,38 @@ def get_zone_signing_key(
     return session.exec(statement).first()
 
 
+def delete_zone(*, session: Session, tenant_id: str, zone_id: str) -> bool:
+    """Remove a decommissioned zone entirely: its ZoneSummary row, every
+    ClientSnapshot it ever pushed, and its registered ZoneSigningKey (if
+    any). These three tables aren't linked by a foreign key -- each is
+    independently keyed on (tenant_id, zone_id) -- so there's no cascade
+    to rely on; all three have to be deleted explicitly. Returns False
+    (no-op) if the zone has no ZoneSummary row, matching the 404 the
+    route raises in that case."""
+    summary = get_zone_summary(session=session, tenant_id=tenant_id, zone_id=zone_id)
+    if summary is None:
+        return False
+
+    session.delete(summary)
+
+    snapshots = session.exec(
+        select(ClientSnapshot).where(
+            ClientSnapshot.tenant_id == tenant_id, ClientSnapshot.zone_id == zone_id
+        )
+    ).all()
+    for snap in snapshots:
+        session.delete(snap)
+
+    signing_key = get_zone_signing_key(
+        session=session, tenant_id=tenant_id, zone_id=zone_id
+    )
+    if signing_key is not None:
+        session.delete(signing_key)
+
+    session.commit()
+    return True
+
+
 def get_stale_zones(*, session: Session, threshold_seconds: int) -> list[ZoneSummary]:
     """Return every ZoneSummary whose last_pulled_at is older than
     threshold_seconds -- the "zone went dark" signal from

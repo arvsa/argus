@@ -147,3 +147,22 @@ def read_zone_signing_key(
             detail=f"No signing key registered for zone '{tenant_id}/{zone_id}'",
         )
     return key
+
+
+@router.delete(
+    "/{tenant_id}/{zone_id}",
+    dependencies=[Depends(get_current_active_superuser)],
+    status_code=204,
+)
+def delete_zone(session: SessionDep, tenant_id: str, zone_id: str) -> None:
+    """
+    Permanently remove a decommissioned zone: its summary, every snapshot
+    it ever pushed, and its registered signing key. There's no undo --
+    a zone that pushes again afterward just starts a fresh history.
+    """
+    deleted = crud.delete_zone(session=session, tenant_id=tenant_id, zone_id=zone_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No zone summary for '{tenant_id}/{zone_id}'",
+        )
