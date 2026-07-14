@@ -81,8 +81,14 @@ done < <(
 )
 
 if [ "${#VOLUMES[@]}" -gt 0 ]; then
-  # sort -u in case a volume matched more than one filter above
-  mapfile -t VOLUMES < <(printf '%s\n' "${VOLUMES[@]}" | sort -u)
+  # sort -u in case a volume matched more than one filter above. Not
+  # mapfile/readarray -- both are bash 4+, but macOS still ships bash 3.2
+  # as /bin/bash (and thus what `env bash` resolves to) for GPLv2 reasons.
+  UNIQUE_VOLUMES=()
+  while IFS= read -r vol; do
+    UNIQUE_VOLUMES+=("$vol")
+  done < <(printf '%s\n' "${VOLUMES[@]}" | sort -u)
+  VOLUMES=("${UNIQUE_VOLUMES[@]}")
   if ! docker volume rm "${VOLUMES[@]}"; then
     echo "    some volumes are still attached -- retrying once after a pause"
     sleep 3
