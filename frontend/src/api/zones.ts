@@ -86,3 +86,9 @@ export const registerZoneSigningKey = async (
   );
   return res.data;
 };
+
+// Permanently removes the zone's summary, every snapshot it ever pushed,
+// and its registered signing key -- see backend crud.delete_zone.
+export const deleteZone = async (tenantId: string, zoneId: string) => {
+  await client.delete(`/zones/${encodeURIComponent(tenantId)}/${encodeURIComponent(zoneId)}`);
+};

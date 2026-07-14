@@ -302,3 +302,70 @@ def test_api_registered_key_verifies_real_manifest(client: TestClient) -> None:
         f"{API}/zones/{tenant_id}/zone-e2e/signing-key", headers=_su(client)
     ).json()["public_key_hex"]
     assert verify_manifest(manifest, data, registered) is True
+
+
+def test_delete_zone_removes_it_from_summary(client: TestClient, db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-doomed",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    headers = _su(client)
+
+    r = client.delete(f"{API}/zones/{tenant_id}/zone-doomed", headers=headers)
+    assert r.status_code == 204, r.text
+
+    r = client.get(f"{API}/zones/summary", headers=headers)
+    match = next((z for z in r.json()["data"] if z["zone_id"] == "zone-doomed"), None)
+    assert match is None
+
+
+def test_delete_zone_also_removes_signing_key(client: TestClient, db: Session) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-doomed",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    headers = _su(client)
+    client.put(
+        f"{API}/zones/{tenant_id}/zone-doomed/signing-key",
+        headers=headers,
+        json={"public_key_hex": "ab" * 32},
+    )
+
+    r = client.delete(f"{API}/zones/{tenant_id}/zone-doomed", headers=headers)
+    assert r.status_code == 204, r.text
+
+    r = client.get(f"{API}/zones/{tenant_id}/zone-doomed/signing-key", headers=headers)
+    assert r.status_code == 404, r.text
+
+
+def test_delete_zone_unknown_404(client: TestClient) -> None:
+    r = client.delete(
+        f"{API}/zones/{random_lower_string()}/no-such-zone", headers=_su(client)
+    )
+    assert r.status_code == 404, r.text
+
+
+def test_delete_zone_forbidden_for_normal_user(
+    client: TestClient, db: Session, normal_user_token_headers: dict[str, str]
+) -> None:
+    tenant_id = random_lower_string()
+    crud.upsert_zone_summary(
+        session=db, tenant_id=tenant_id, zone_id="zone-protected",
+        up_count=1, down_count=0, last_snapshot_ts=1000,
+    )
+    r = client.delete(
+        f"{API}/zones/{tenant_id}/zone-protected", headers=normal_user_token_headers
+    )
+    assert r.status_code == 403, r.text
+
+    # Still there -- the forbidden request must not have deleted anything.
+    r = client.get(f"{API}/zones/summary", headers=_su(client))
+    match = next((z for z in r.json()["data"] if z["zone_id"] == "zone-protected"), None)
+    assert match is not None
+
+
+def test_delete_zone_requires_auth(client: TestClient) -> None:
+    r = client.delete(f"{API}/zones/some-tenant/some-zone")
+    assert r.status_code == 401, r.text
