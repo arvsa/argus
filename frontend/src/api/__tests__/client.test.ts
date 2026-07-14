@@ -23,6 +23,17 @@ describe("api client request interceptor", () => {
     const config = fulfilled({ headers: {} });
     expect(config.headers.Authorization).toBeUndefined();
   });
+
+  it("does not override a caller-supplied Authorization header with a stale store token", () => {
+    // Login.tsx's getMe(freshToken) explicitly sets this header to verify
+    // the token it just received, before setAuth() has committed it to the
+    // store -- if the store still holds an old token (e.g. from before a
+    // dev DB reset), it must not win over the fresh one.
+    useAuthStore.setState({ token: "stale-token", user: null });
+    const fulfilled = (client.interceptors.request as any).handlers[0].fulfilled;
+    const config = fulfilled({ headers: { Authorization: "Bearer fresh-token" } });
+    expect(config.headers.Authorization).toBe("Bearer fresh-token");
+  });
 });
 
 describe("api client response interceptor", () => {

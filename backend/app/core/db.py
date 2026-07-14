@@ -4,7 +4,12 @@ from app import crud
 from app.core.config import settings
 from app.models import User, UserCreate
 
-engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI))
+
+# pool_pre_ping: validate a pooled connection before handing it out. Without
+# this, a connection silently dropped underneath us (Docker Swarm's overlay
+# network resetting idle connections is a common source) surfaces as a
+# random mid-request 500 instead of SQLAlchemy transparently reconnecting.
+engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI), pool_pre_ping=True)
 
 
 # make sure all SQLModel models are imported (app.models) before initializing DB

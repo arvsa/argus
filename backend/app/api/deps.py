@@ -48,7 +48,17 @@ def get_current_user(session: SessionDep, token: TokenDep) -> User:
         )
     user = session.get(User, UUID(token_data.sub))
     if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+        # 401, same as the decode failure above and for the same reason: a
+        # well-signed token whose subject no longer resolves to a user (the
+        # account was deleted, or -- in dev -- the DB was reset independently
+        # of a client holding an old token) is exactly as unusable as a
+        # forged one. Client-side, both must trigger the same logout instead
+        # of leaving a token in localStorage that every request fails on.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
     return user
