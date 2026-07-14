@@ -11,6 +11,7 @@ import {
   registerZoneSigningKey,
   updateZoneDisplayName,
 } from "@/api/zones";
+import type { ZoneSigningKey as ZoneSigningKeyT } from "@/api/zones";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
@@ -175,19 +176,23 @@ function DeleteZoneButton({ tenantId, zoneId }: { tenantId: string; zoneId: stri
 // superusers, a register/rotate form (PUT .../signing-key). This is the
 // out-of-band registration step the ingestion pipeline's signature
 // verification depends on -- the server never trusts a manifest's own
-// embedded key.
-function SigningKeyPanel({ tenantId, zoneId }: { tenantId: string; zoneId: string }) {
+// embedded key. The signing-key lookup itself lives in the parent
+// (ZoneDetailPage) so it can also feed the "is this zone known at all"
+// distinction used by the empty state and the rename/delete gating below.
+function SigningKeyPanel({
+  tenantId,
+  zoneId,
+  registered,
+  unregistered,
+}: {
+  tenantId: string;
+  zoneId: string;
+  registered: ZoneSigningKeyT | undefined;
+  unregistered: boolean;
+}) {
   const isSuperuser = useAuthStore((s) => s.user?.is_superuser ?? false);
   const queryClient = useQueryClient();
   const [keyHex, setKeyHex] = useState("");
-
-  const { data: registered, isError, error } = useQuery({
-    queryKey: ["zone-signing-key", tenantId, zoneId],
-    queryFn: () => getZoneSigningKey(tenantId, zoneId),
-    // 404 = no key registered yet, an expected state.
-    retry: false,
-  });
-  const unregistered = isError && is404(error);
 
   const mutation = useMutation({
     mutationFn: (hex: string) => registerZoneSigningKey(tenantId, zoneId, hex),
@@ -287,6 +292,26 @@ export function ZoneDetailPage() {
     (z) => z.tenant_id === tenantId && z.zone_id === zoneId
   );
 
+  // Shared with SigningKeyPanel via the same query key/cache -- lifted here
+  // too because a registered key is, on its own, evidence this tenant/zone
+  // is real (an operator pre-registered it ahead of the first push), even
+  // before any ZoneSummary row exists.
+  const { data: signingKey, isError: signingKeyIsError, error: signingKeyError } = useQuery({
+    queryKey: ["zone-signing-key", tenantId, zoneId],
+    queryFn: () => getZoneSigningKey(tenantId!, zoneId!),
+    enabled: Boolean(tenantId && zoneId),
+    retry: false,
+  });
+  const signingKeyUnregistered = signingKeyIsError && is404(signingKeyError);
+
+  // Neither a ZoneSummary (ingested at least once) nor a registered signing
+  // key (pre-registered ahead of the first push) -- this tenant/zone has
+  // never been seen by this server at all. Distinguishes "typo'd/nonexistent
+  // zone" from "legit zone, just hasn't pushed yet" so AddZoneForm's blind
+  // navigate() (it has no way to check beforehand) doesn't read as silently
+  // landing on a broken page.
+  const zoneKnown = Boolean(summary) || Boolean(signingKey);
+
   // Down devices first (they're what an operator opens this page for),
   // then by address.
   const devices = useMemo(
@@ -313,21 +338,21 @@ export function ZoneDetailPage() {
           title={summary?.display_name ?? zoneId ?? "Zone"}
           description={`Latest snapshot from ${tenantId}/${zoneId}`}
         />
-        {isSuperuser && tenantId && zoneId && (
+        {isSuperuser && tenantId && zoneId && summary && (
           <DisplayNameEditor
             tenantId={tenantId}
             zoneId={zoneId}
             currentName={summary?.display_name ?? null}
           />
         )}
-        {isSuperuser && tenantId && zoneId && (
+        {isSuperuser && tenantId && zoneId && summary && (
           <DeleteZoneButton tenantId={tenantId} zoneId={zoneId} />
         )}
       </div>
 
       {isLoading && <PageSpinner />}
 
-      {isError && is404(error) && (
+      {isError && is404(error) && zoneKnown && (
         <div className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white py-16 text-gray-500">
           <Inbox className="h-8 w-8 text-gray-300" />
           <p className="text-sm font-medium text-gray-700">
@@ -339,6 +364,18 @@ export function ZoneDetailPage() {
           </p>
         </div>
       )}
+      {isError && is404(error) && !zoneKnown && (
+        <div className="flex flex-col items-center gap-3 rounded-xl border border-gray-200 bg-white py-16 text-gray-500">
+          <Inbox className="h-8 w-8 text-gray-300" />
+          <p className="text-sm font-medium text-gray-700">
+            No record of "{tenantId}/{zoneId}" on this server
+          </p>
+          <p className="max-w-sm text-center text-sm text-gray-500">
+            Double-check the tenant and zone IDs for typos, or register this zone's signing
+            key below to reserve it ahead of its first push.
+          </p>
+        </div>
+      )}
       {isError && !is404(error) && (
         <ErrorState message="Couldn't load the zone snapshot." onRetry={() => refetch()} />
       )}
@@ -347,7 +384,14 @@ export function ZoneDetailPage() {
           above) -- an operator using Add Zone to reach this page ahead
           of the zone's first push still needs to pre-register its
           signing key, not just after ingestion has already started. */}
-      {tenantId && zoneId && <SigningKeyPanel tenantId={tenantId} zoneId={zoneId} />}
+      {tenantId && zoneId && (
+        <SigningKeyPanel
+          tenantId={tenantId}
+          zoneId={zoneId}
+          registered={signingKey}
+          unregistered={Boolean(signingKeyUnregistered)}
+        />
+      )}
 
       {data && (
         <>

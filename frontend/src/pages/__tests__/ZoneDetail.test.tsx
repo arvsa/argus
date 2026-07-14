@@ -168,6 +168,26 @@ describe("ZoneDetailPage", () => {
     expect(await screen.findByText(/couldn't load/i)).toBeInTheDocument();
   });
 
+  it("shows an 'unknown zone' empty state when neither a summary nor a signing key exists (typo'd tenant/zone)", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(zonesApi.getZoneSigningKey).mockRejectedValue(http404());
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockRejectedValue(http404());
+    renderPage();
+
+    expect(await screen.findByText(/no record of/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no snapshots ingested/i)).not.toBeInTheDocument();
+  });
+
+  it("still shows the plain 'no snapshots yet' empty state when a signing key is registered ahead of the first push", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(zonesApi.getZoneSigningKey).mockResolvedValue(signingKey());
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockRejectedValue(http404());
+    renderPage();
+
+    expect(await screen.findByText(/no snapshots ingested/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no record of/i)).not.toBeInTheDocument();
+  });
+
   // ── Display name editing ────────────────────────────────────────────
 
   it("lets a superuser rename the zone from the detail page", async () => {
@@ -197,6 +217,19 @@ describe("ZoneDetailPage", () => {
     expect(
       screen.queryByRole("button", { name: /edit display name/i })
     ).not.toBeInTheDocument();
+  });
+
+  it("hides rename and delete controls for a superuser when no zone summary row exists yet, even with a signing key pre-registered", async () => {
+    vi.mocked(zonesApi.getZoneSummaries).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(zonesApi.getZoneSigningKey).mockResolvedValue(signingKey());
+    vi.mocked(zonesApi.getLatestZoneSnapshot).mockRejectedValue(http404());
+    renderPage();
+
+    expect(await screen.findByText(/no snapshots ingested/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /edit display name/i })
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /delete zone/i })).not.toBeInTheDocument();
   });
 
   // ── Signing key management ──────────────────────────────────────────
