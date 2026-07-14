@@ -390,11 +390,31 @@ func main() {
 		},
 	))
 
+	// zoneIdentity is available immediately (zone/tenant come from flags),
+	// and updated again below once/if a signing key finishes loading --
+	// see identityStore's doc comment for why a plain set() is safe here.
+	var zoneIdentity identityStore
+	zoneIdentity.set(ZoneIdentity{ZoneID: *zoneID, TenantID: *tenantID})
+
 	// Start metrics server
 	go func() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
 		mux.HandleFunc("/-/healthy", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(200) })
+		// /identity is unauthenticated, same as /metrics -- fine today since
+		// it returns nothing secret (a public key is meant to be shared; see
+		// PublicKeyHex's doc comment) and this port is Swarm-internal-only
+		// (swarm/stack.client.yml never publishes it) in the topology
+		// deployment.md treats as production-representative. It's also
+		// published to the host in compose.yml for local Prometheus
+		// scraping convenience, so a Compose deployment exposed to an
+		// untrusted network would leak zone_id/tenant_id/pubkey to anyone
+		// who can reach the host -- low severity (nothing here is a secret)
+		// but worth tightening if that ever becomes a real deployment
+		// shape: either move /identity off this port entirely (have the
+		// backend read identity from a shared file/volume instead of HTTP)
+		// or put it on a second listener Compose doesn't publish.
+		mux.Handle("/identity", zoneIdentity.handler())
 		log.Printf("metrics: listening on %s", *metricsAddr)
 		if err := http.ListenAndServe(*metricsAddr, mux); err != nil {
 			log.Fatalf("metrics server failed: %v", err)
@@ -433,6 +453,7 @@ func main() {
 			if err != nil {
 				log.Fatalf("failed to load/generate signing key: %v", err)
 			}
+			zoneIdentity.set(ZoneIdentity{ZoneID: *zoneID, TenantID: *tenantID, PublicKeyHex: signer.PublicKeyHex()})
 		}
 
 		stopExporter = runExporter(ctx, rdb, ExporterConfig{

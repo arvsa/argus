@@ -106,6 +106,12 @@ class Settings(BaseSettings):
     # only the ingestion task.
     ROLE: Literal["client", "server"] = "client"
 
+    # Where a client-role backend reaches its zone's own pingsvc to read
+    # /identity (zone_id/tenant_id/signing pubkey) for the zone-identity
+    # endpoint above -- matches REDIS_URL's convention of the Compose/Swarm
+    # service name as hostname.
+    PINGSVC_METRICS_URL: str = "http://pingsvc:9090"
+
     # argus-server ingestion (plan/dynamic-hierarchy-multi-zone-architecture.md
     # §4.5). S3_BUCKET unset/empty disables ingestion entirely, matching
     # pingsvc's own opt-in pattern for its S3 push (-s3-bucket).
