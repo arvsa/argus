@@ -4,6 +4,7 @@ CRUD lifecycle tests for /devices -- see plan/device-node-assignment-bridge-v1.m
 Requires a live DB (run inside Docker: docker compose exec backend pytest).
 """
 
+import hashlib
 import uuid
 
 from fastapi.testclient import TestClient
@@ -342,3 +343,92 @@ def test_targets_export_succeeds_regardless_of_device_count(client: TestClient) 
     headers = _su(client)
     r = client.get(f"{API}/devices/targets-export", headers=headers)
     assert r.status_code == 200, r.text
+
+
+# ── pingsvc target sync (targets-hash / targets-export-internal) ──────────
+# See plan for "Live Target Sync (pingsvc hot-reload)": pingsvc has no user
+# account, so these routes are gated by a separate shared-secret token
+# (settings.PINGSVC_SYNC_TOKEN via the X-Pingsvc-Token header), not
+# get_current_active_superuser -- a normal human JWT must not work here.
+
+
+def _pingsvc_headers() -> dict[str, str]:
+    return {"X-Pingsvc-Token": settings.PINGSVC_SYNC_TOKEN}
+
+
+def test_targets_hash_requires_pingsvc_token(client: TestClient) -> None:
+    r = client.get(f"{API}/devices/targets-hash")
+    assert r.status_code == 401
+
+
+def test_targets_hash_rejects_wrong_pingsvc_token(client: TestClient) -> None:
+    r = client.get(
+        f"{API}/devices/targets-hash", headers={"X-Pingsvc-Token": "not-the-real-token"}
+    )
+    assert r.status_code == 401
+
+
+def test_targets_hash_rejects_a_superuser_jwt(client: TestClient) -> None:
+    """A human superuser JWT must not work here -- this is a distinct
+    credential from CurrentUser/get_current_active_superuser, on purpose."""
+    headers = _su(client)
+    r = client.get(f"{API}/devices/targets-hash", headers=headers)
+    assert r.status_code == 401
+
+
+def test_targets_hash_matches_sha256_of_export_body(client: TestClient) -> None:
+    su_headers = _su(client)
+    addr = "203.0.113.20"
+    client.post(f"{API}/devices/", headers=su_headers, json={"addr": addr})
+
+    export = client.get(f"{API}/devices/targets-export", headers=su_headers)
+    assert export.status_code == 200, export.text
+    expected = hashlib.sha256(export.text.encode()).hexdigest()
+
+    r = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers())
+    assert r.status_code == 200, r.text
+    assert r.json()["hash"] == expected
+
+
+def test_targets_hash_changes_when_a_device_is_added(client: TestClient) -> None:
+    su_headers = _su(client)
+    before = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers()).json()[
+        "hash"
+    ]
+
+    client.post(f"{API}/devices/", headers=su_headers, json={"addr": "203.0.113.21"})
+
+    after = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers()).json()[
+        "hash"
+    ]
+    assert before != after
+
+
+def test_targets_hash_stable_when_nothing_changed(client: TestClient) -> None:
+    r1 = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers())
+    r2 = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers())
+    assert r1.json()["hash"] == r2.json()["hash"]
+
+
+def test_targets_export_internal_requires_pingsvc_token(client: TestClient) -> None:
+    r = client.get(f"{API}/devices/targets-export-internal")
+    assert r.status_code == 401
+
+
+def test_targets_export_internal_rejects_a_superuser_jwt(client: TestClient) -> None:
+    headers = _su(client)
+    r = client.get(f"{API}/devices/targets-export-internal", headers=headers)
+    assert r.status_code == 401
+
+
+def test_targets_export_internal_matches_human_facing_export(client: TestClient) -> None:
+    su_headers = _su(client)
+    client.post(f"{API}/devices/", headers=su_headers, json={"addr": "203.0.113.22"})
+
+    human = client.get(f"{API}/devices/targets-export", headers=su_headers)
+    internal = client.get(
+        f"{API}/devices/targets-export-internal", headers=_pingsvc_headers()
+    )
+    assert internal.status_code == 200, internal.text
+    assert internal.text == human.text
+    assert internal.headers["content-type"].startswith("text/plain")

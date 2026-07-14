@@ -131,6 +131,15 @@ class Settings(BaseSettings):
     # this the table grows by one row per zone per push interval, forever.
     SNAPSHOT_RETENTION_DAYS: int = 7
 
+    # Shared secret pingsvc presents (X-Pingsvc-Token header) to
+    # /devices/targets-hash and /devices/targets-export-internal -- pingsvc
+    # has no user account, so these can't be gated by CurrentUser/
+    # get_current_active_superuser like every other route. Must be the same
+    # value configured on both the backend and pingsvc sides (see
+    # ARGUS_PINGSVC_SYNC_TOKEN), so unlike SECRET_KEY it can't be an
+    # independently-auto-generated per-process default.
+    PINGSVC_SYNC_TOKEN: str = ""
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (
@@ -149,6 +158,7 @@ class Settings(BaseSettings):
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )
+        self._check_default_secret("PINGSVC_SYNC_TOKEN", self.PINGSVC_SYNC_TOKEN)
         return self
 
 
