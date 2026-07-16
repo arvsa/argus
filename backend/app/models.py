@@ -254,17 +254,30 @@ class NodesPublic(SQLModel):
 
 class DeviceBase(SQLModel):
     addr: str = Field(max_length=255, unique=True, index=True)
+    # Identity for device_key (plan/device-discovery-v1.md §2.3): mac when
+    # known, else addr. No uniqueness/index here -- MAC-based dedup on
+    # discovery ingestion is DiscoveredDevice's job (a separate, later
+    # plan step), not this table's.
+    mac: str | None = Field(default=None, max_length=32)
+    # Enrichment fields (plan §2.2) that survive a DiscoveredDevice's
+    # promotion and show up in the UI instead of a bare address. Both
+    # freely editable post-creation, like addr/node_id/mac.
+    hostname: str | None = Field(default=None, max_length=255)
+    timezone: str | None = Field(default=None, max_length=64)
 
 
 class DeviceCreate(DeviceBase):
     node_id: uuid.UUID | None = None
 
 
-# addr/node_id are both freely editable post-creation (unlike Node, a
-# Device has no denormalized state derived from either field).
+# addr/node_id/mac/hostname/timezone are all freely editable post-creation
+# (unlike Node, a Device has no denormalized state derived from any of them).
 class DeviceUpdate(SQLModel):
     addr: str | None = Field(default=None, max_length=255)
     node_id: uuid.UUID | None = None
+    mac: str | None = Field(default=None, max_length=32)
+    hostname: str | None = Field(default=None, max_length=255)
+    timezone: str | None = Field(default=None, max_length=64)
 
 
 class Device(DeviceBase, table=True):
@@ -294,6 +307,66 @@ class DevicePublic(DeviceBase):
 
 class DevicesPublic(SQLModel):
     data: list[DevicePublic]
+    count: int
+
+
+# ========== Device discovery (see plan/device-discovery-v1.md §2.2) ==========
+#
+# A separate candidate pool, not written straight into Device: an unreviewed
+# candidate landing directly in Device would start getting pinged (GET
+# /devices/targets-export exports every Device row unconditionally) before
+# an operator ever saw it. Promotion (approve, or AUTO_POPULATE_DISCOVERED_
+# DEVICES) creates/merges into a real Device via crud.promote_discovered_device.
+
+
+class DiscoveredDeviceReport(SQLModel):
+    """One sighting reported by pingsvc's discovery subsystem -- the body
+    shape of a single entry in POST /devices/discovered's batch."""
+
+    addr: str
+    mac: str | None = None
+    hostname: str | None = None
+    discovered_via: str
+
+
+class DiscoveredDeviceReportBatch(SQLModel):
+    reports: list[DiscoveredDeviceReport]
+
+
+class DiscoveredDeviceBase(SQLModel):
+    addr: str = Field(max_length=255, unique=True, index=True)
+    mac: str | None = Field(default=None, max_length=32)
+    hostname: str | None = Field(default=None, max_length=255)
+    discovered_via: str = Field(max_length=64)
+    status: str = Field(default="pending", max_length=16)
+
+
+class DiscoveredDevice(DiscoveredDeviceBase, table=True):
+    __tablename__ = "discovered_device"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    first_seen_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+    last_seen_at: datetime = Field(
+        default_factory=get_datetime_utc,
+        sa_type=DateTime(timezone=True),  # type: ignore
+    )
+
+
+class DiscoveredDevicePublic(DiscoveredDeviceBase):
+    id: uuid.UUID
+    first_seen_at: datetime
+    last_seen_at: datetime
+    # Computed at read time (settings.DISCOVERY_STALE_THRESHOLD_SECONDS
+    # against last_seen_at), never a stored column -- see
+    # crud.discovered_device_is_stale.
+    is_stale: bool
+
+
+class DiscoveredDevicesPublic(SQLModel):
+    data: list[DiscoveredDevicePublic]
     count: int
 
 
@@ -334,9 +407,7 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     # sized snapshots blow the sort buffer (error 1038) and 500 the zone
     # detail endpoint.
     __table_args__ = (
-        Index(
-            "ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"
-        ),
+        Index("ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
