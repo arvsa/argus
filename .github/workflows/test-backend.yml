@@ -29,6 +29,7 @@ jobs:
       DOCKER_IMAGE_FRONTEND: argus-frontend
       REDIS_URL: redis://localhost:6379/0
       EMAILS_FROM_EMAIL: noreply@example.com
+      PINGSVC_SYNC_TOKEN: testpingsvcsynctoken1234567890
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -53,6 +54,7 @@ jobs:
           DOCKER_IMAGE_FRONTEND=argus-frontend
           REDIS_URL=redis://localhost:6379/0
           EMAILS_FROM_EMAIL=noreply@example.com
+          PINGSVC_SYNC_TOKEN=testpingsvcsynctoken1234567890
           EOF
       - run: docker compose down -v --remove-orphans
       - run: docker compose up -d db redis

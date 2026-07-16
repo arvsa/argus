@@ -392,15 +392,15 @@ def test_targets_hash_matches_sha256_of_export_body(client: TestClient) -> None:
 
 def test_targets_hash_changes_when_a_device_is_added(client: TestClient) -> None:
     su_headers = _su(client)
-    before = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers()).json()[
-        "hash"
-    ]
+    before = client.get(
+        f"{API}/devices/targets-hash", headers=_pingsvc_headers()
+    ).json()["hash"]
 
     client.post(f"{API}/devices/", headers=su_headers, json={"addr": "203.0.113.21"})
 
-    after = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers()).json()[
-        "hash"
-    ]
+    after = client.get(
+        f"{API}/devices/targets-hash", headers=_pingsvc_headers()
+    ).json()["hash"]
     assert before != after
 
 
@@ -421,7 +421,9 @@ def test_targets_export_internal_rejects_a_superuser_jwt(client: TestClient) -> 
     assert r.status_code == 401
 
 
-def test_targets_export_internal_matches_human_facing_export(client: TestClient) -> None:
+def test_targets_export_internal_matches_human_facing_export(
+    client: TestClient,
+) -> None:
     su_headers = _su(client)
     client.post(f"{API}/devices/", headers=su_headers, json={"addr": "203.0.113.22"})
 

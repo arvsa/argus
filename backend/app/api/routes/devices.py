@@ -108,9 +108,7 @@ def get_devices_targets_hash(session: SessionDep) -> dict[str, str]:
     return {"hash": hashlib.sha256(body.encode()).hexdigest()}
 
 
-@router.get(
-    "/targets-export-internal", dependencies=[Depends(verify_pingsvc_token)]
-)
+@router.get("/targets-export-internal", dependencies=[Depends(verify_pingsvc_token)])
 def get_devices_targets_export_internal(session: SessionDep) -> PlainTextResponse:
     """
     Same body as /targets-export, for pingsvc's own use -- kept as a
