@@ -9,6 +9,9 @@ export interface DeviceAssignment {
   addr: string;
   node_id: string | null;
   created_at: string | null;
+  mac: string | null;
+  hostname: string | null;
+  timezone: string | null;
 }
 
 export interface DeviceAssignmentsPublic {
@@ -16,7 +19,10 @@ export interface DeviceAssignmentsPublic {
   count: number;
 }
 
-export const getDeviceAssignments = async (params: { nodeId: string }) => {
+// nodeId omitted fetches every Device regardless of assignment -- used by
+// the live ping-status page (Devices.tsx) to join hostnames onto
+// Redis-backed status, which only ever knows addr, not node assignment.
+export const getDeviceAssignments = async (params: { nodeId?: string }) => {
   const res = await client.get<DeviceAssignmentsPublic>("/devices/", {
     params: { node_id: params.nodeId, limit: 1000 },
   });

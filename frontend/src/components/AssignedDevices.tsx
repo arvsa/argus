@@ -101,7 +101,20 @@ export function AssignedDevices({ nodeId }: { nodeId: string }) {
                 key={device.id}
                 className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-1.5 text-sm"
               >
-                <span className="truncate font-mono text-gray-700">{device.addr}</span>
+                <span className="min-w-0 truncate">
+                  {device.hostname ? (
+                    <>
+                      <span className="block truncate font-medium text-gray-900">
+                        {device.hostname}
+                      </span>
+                      <span className="block truncate font-mono text-xs text-gray-400">
+                        {device.addr}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="truncate font-mono text-gray-700">{device.addr}</span>
+                  )}
+                </span>
                 <ConfirmDialog
                   trigger={
                     <button

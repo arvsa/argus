@@ -19,6 +19,9 @@ function device(overrides: Partial<DeviceAssignment> = {}): DeviceAssignment {
     addr: "10.0.1.5",
     node_id: "node-1",
     created_at: "2024-01-01T00:00:00Z",
+    mac: null,
+    hostname: null,
+    timezone: null,
     ...overrides,
   };
 }
@@ -97,6 +100,17 @@ describe("AssignedDevices", () => {
       node_id: "node-1",
       hostname: "floor-1-switch",
     });
+  });
+
+  it("shows the device's name instead of its bare address when known", async () => {
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({
+      data: [device({ hostname: "floor-1-switch" })],
+      count: 1,
+    });
+    renderComponent();
+
+    expect(await screen.findByText("floor-1-switch")).toBeInTheDocument();
+    expect(screen.getByText("10.0.1.5")).toBeInTheDocument();
   });
 
   it("bulk-imports devices from pasted CSV, scoped to this node", async () => {
