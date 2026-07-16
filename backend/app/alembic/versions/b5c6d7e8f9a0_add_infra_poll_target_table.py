@@ -11,7 +11,7 @@ import sqlmodel.sql.sqltypes
 
 
 revision = 'b5c6d7e8f9a0'
-down_revision = 'a9b8c7d6e5f4'
+down_revision = 'd6e7f8a9b0c1'
 branch_labels = None
 depends_on = None
 
