@@ -10,6 +10,8 @@ from app.models import (
     ClientSnapshotCreate,
     Device,
     DeviceCreate,
+    InfraPollTarget,
+    InfraPollTargetCreate,
     Item,
     ItemCreate,
     Node,
@@ -147,6 +149,24 @@ def get_device_by_addr(*, session: Session, addr: str) -> Device | None:
 
 def create_device(*, session: Session, device_create: DeviceCreate) -> Device:
     db_obj = Device.model_validate(device_create)
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def get_infra_poll_target_by_addr(
+    *, session: Session, addr: str
+) -> InfraPollTarget | None:
+    return session.exec(
+        select(InfraPollTarget).where(InfraPollTarget.addr == addr)
+    ).first()
+
+
+def create_infra_poll_target(
+    *, session: Session, target_create: InfraPollTargetCreate
+) -> InfraPollTarget:
+    db_obj = InfraPollTarget.model_validate(target_create)
     session.add(db_obj)
     session.commit()
     session.refresh(db_obj)
