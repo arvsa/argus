@@ -140,6 +140,11 @@ class Settings(BaseSettings):
     # independently-auto-generated per-process default.
     PINGSVC_SYNC_TOKEN: str = ""
 
+    # Off by default: discovery should never silently start monitoring
+    # something an operator hasn't seen, until they opt in
+    # (plan/device-discovery-v1.md §2.7).
+    AUTO_POPULATE_DISCOVERED_DEVICES: bool = False
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (

@@ -13,12 +13,17 @@ from app.api.deps import (
     get_current_active_superuser,
     verify_pingsvc_token,
 )
+from app.core.config import settings
 from app.models import (
     Device,
     DeviceCreate,
     DevicePublic,
     DevicesPublic,
     DeviceUpdate,
+    DiscoveredDevice,
+    DiscoveredDevicePublic,
+    DiscoveredDeviceReportBatch,
+    DiscoveredDevicesPublic,
     Message,
     Node,
 )
@@ -134,6 +139,82 @@ def get_devices_targets_export_internal(session: SessionDep) -> PlainTextRespons
     surface never changes.
     """
     return PlainTextResponse(build_targets_export(session))
+
+
+# ── Device discovery (plan/device-discovery-v1.md §2.7) ─────────────────
+# Registered before /{id}, same reason as /targets-export above: "discovered"
+# would otherwise be swallowed by /{id} and fail UUID validation instead of
+# ever reaching these routes.
+
+
+@router.post("/discovered", dependencies=[Depends(verify_pingsvc_token)])
+def report_discovered_devices(
+    session: SessionDep, batch: DiscoveredDeviceReportBatch
+) -> DiscoveredDevicesPublic:
+    """
+    pingsvc's discovery subsystem reports a batch of sightings here (same
+    auth as target-sync's routes -- pingsvc has no user account). Each
+    report is merge-upserted into the candidate pool (see
+    crud.upsert_discovered_device); if AUTO_POPULATE_DISCOVERED_DEVICES is
+    set, each is immediately promoted to a real Device in the same request
+    instead of waiting for manual review.
+    """
+    results = []
+    for report in batch.reports:
+        discovered = crud.upsert_discovered_device(session=session, report=report)
+        if settings.AUTO_POPULATE_DISCOVERED_DEVICES and discovered.status == "pending":
+            discovered = crud.approve_discovered_device(
+                session=session, discovered=discovered
+            )
+        results.append(discovered)
+    return DiscoveredDevicesPublic(data=results, count=len(results))
+
+
+@router.get(
+    "/discovered",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=DiscoveredDevicesPublic,
+)
+def read_discovered_devices(session: SessionDep) -> Any:
+    """
+    List discovery candidates for operator review (superuser-only -- this
+    is a human review workflow, not a pingsvc-facing route).
+    """
+    devices = session.exec(select(DiscoveredDevice)).all()
+    return DiscoveredDevicesPublic(data=devices, count=len(devices))
+
+
+@router.post(
+    "/discovered/{id}/approve",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=DiscoveredDevicePublic,
+)
+def approve_discovered_device(session: SessionDep, id: uuid.UUID) -> Any:
+    """
+    Promote a discovery candidate to a real, monitored Device (see
+    crud.approve_discovered_device) -- the manual counterpart to
+    AUTO_POPULATE_DISCOVERED_DEVICES.
+    """
+    discovered = session.get(DiscoveredDevice, id)
+    if not discovered:
+        raise HTTPException(status_code=404, detail="Discovered device not found")
+    return crud.approve_discovered_device(session=session, discovered=discovered)
+
+
+@router.post(
+    "/discovered/{id}/reject",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=DiscoveredDevicePublic,
+)
+def reject_discovered_device(session: SessionDep, id: uuid.UUID) -> Any:
+    """
+    Mark a discovery candidate rejected -- it stays in the candidate pool
+    (for history/dedup against future sightings) but is never promoted.
+    """
+    discovered = session.get(DiscoveredDevice, id)
+    if not discovered:
+        raise HTTPException(status_code=404, detail="Discovered device not found")
+    return crud.reject_discovered_device(session=session, discovered=discovered)
 
 
 @router.get("/{id}", response_model=DevicePublic)

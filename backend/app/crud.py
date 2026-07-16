@@ -10,6 +10,8 @@ from app.models import (
     ClientSnapshotCreate,
     Device,
     DeviceCreate,
+    DiscoveredDevice,
+    DiscoveredDeviceReport,
     Item,
     ItemCreate,
     Node,
@@ -151,6 +153,99 @@ def create_device(*, session: Session, device_create: DeviceCreate) -> Device:
     session.commit()
     session.refresh(db_obj)
     return db_obj
+
+
+def upsert_discovered_device(
+    *, session: Session, report: DiscoveredDeviceReport
+) -> DiscoveredDevice:
+    """Merge a discovery sighting into the candidate pool (plan/device-
+    discovery-v1.md §2.2), keyed by mac (falling back to addr when the
+    report carries no mac). A later report missing a field an earlier one
+    already established (e.g. an ARP sighting after an SNMP enrichment)
+    must never null it out -- only addr is unconditionally updated to the
+    latest sighting (an address can move; that's the whole point of
+    keying identity by mac), everything else is COALESCE(new, existing).
+    Does not touch status, so a repeat sighting after approve/reject never
+    reverts it back to pending."""
+    existing = None
+    if report.mac:
+        existing = session.exec(
+            select(DiscoveredDevice).where(DiscoveredDevice.mac == report.mac)
+        ).first()
+    if existing is None:
+        existing = session.exec(
+            select(DiscoveredDevice).where(DiscoveredDevice.addr == report.addr)
+        ).first()
+
+    now = datetime.now(timezone.utc)
+    if existing is None:
+        db_obj = DiscoveredDevice(
+            addr=report.addr,
+            mac=report.mac,
+            hostname=report.hostname,
+            discovered_via=report.discovered_via,
+            first_seen_at=now,
+            last_seen_at=now,
+        )
+    else:
+        db_obj = existing
+        db_obj.addr = report.addr
+        db_obj.mac = report.mac or db_obj.mac
+        db_obj.hostname = report.hostname or db_obj.hostname
+        db_obj.discovered_via = report.discovered_via or db_obj.discovered_via
+        db_obj.last_seen_at = now
+
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def promote_discovered_device(
+    *, session: Session, discovered: DiscoveredDevice
+) -> Device:
+    """Create (or non-destructively merge into) the real, monitored Device
+    for an approved/auto-populated discovery -- reuses get_device_by_addr/
+    create_device, the same primitives POST /devices/ uses, so discovery
+    doesn't get its own parallel device-creation rules (plan §2.2). Never
+    assigns a node: that's a separate, manual step via the existing Device
+    UI, so unlike POST /devices/ there's no orphan-reassignment-conflict
+    case to handle here."""
+    existing = get_device_by_addr(session=session, addr=discovered.addr)
+    if existing:
+        existing.mac = existing.mac or discovered.mac
+        existing.hostname = existing.hostname or discovered.hostname
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+    return create_device(
+        session=session,
+        device_create=DeviceCreate(
+            addr=discovered.addr, mac=discovered.mac, hostname=discovered.hostname
+        ),
+    )
+
+
+def approve_discovered_device(
+    *, session: Session, discovered: DiscoveredDevice
+) -> DiscoveredDevice:
+    promote_discovered_device(session=session, discovered=discovered)
+    discovered.status = "approved"
+    session.add(discovered)
+    session.commit()
+    session.refresh(discovered)
+    return discovered
+
+
+def reject_discovered_device(
+    *, session: Session, discovered: DiscoveredDevice
+) -> DiscoveredDevice:
+    discovered.status = "rejected"
+    session.add(discovered)
+    session.commit()
+    session.refresh(discovered)
+    return discovered
 
 
 def create_client_snapshot(
