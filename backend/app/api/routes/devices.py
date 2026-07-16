@@ -1,12 +1,18 @@
+import hashlib
 import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse
-from sqlmodel import func, select
+from sqlmodel import Session, func, select
 
 from app import crud
-from app.api.deps import CurrentUser, SessionDep, get_current_active_superuser
+from app.api.deps import (
+    CurrentUser,
+    SessionDep,
+    get_current_active_superuser,
+    verify_pingsvc_token,
+)
 from app.models import (
     Device,
     DeviceCreate,
@@ -44,20 +50,17 @@ def read_devices(
     return DevicesPublic(data=devices, count=count)
 
 
-# Registered before /{id} -- FastAPI/Starlette match routes in registration
-# order, and /{id} (a str-typed path segment before validation) would
-# otherwise swallow a request for the literal path "targets-export" and
-# fail UUID validation instead of ever reaching this route.
-@router.get("/targets-export", dependencies=[Depends(get_current_active_superuser)])
-def get_devices_targets_export(session: SessionDep) -> PlainTextResponse:
+def build_targets_export(session: Session) -> str:
     """
-    Export every Device as a pingsvc-compatible target file (see
+    Render every Device as pingsvc's target-file body (see
     pingsvc/cmd/pingsvc/main.go's parseTargetLine and
     plan/device-node-assignment-bridge-v1.md): one line per device, either
     a bare "addr" (unassigned) or "addr,ancestor1;ancestor2;...;node_id"
     (root-first ancestors from Node.path_ids, then the assigned node
-    itself last). Superuser-gated -- this reveals the full address +
-    hierarchy map in bulk, higher sensitivity than a single device read.
+    itself last). Shared by the human-facing /targets-export and the
+    pingsvc-facing /targets-hash and /targets-export-internal below, so
+    the hash pingsvc compares against can never drift from the body it
+    would actually fetch.
     """
     devices = session.exec(select(Device)).all()
     lines = []
@@ -73,8 +76,47 @@ def get_devices_targets_export(session: SessionDep) -> PlainTextResponse:
             continue
         chain = [*node.path_ids, str(node.id)]
         lines.append(f"{device.addr},{';'.join(chain)}")
-    body = "\n".join(lines) + ("\n" if lines else "")
-    return PlainTextResponse(body)
+    return "\n".join(lines) + ("\n" if lines else "")
+
+
+# Registered before /{id} -- FastAPI/Starlette match routes in registration
+# order, and /{id} (a str-typed path segment before validation) would
+# otherwise swallow a request for the literal path "targets-export" and
+# fail UUID validation instead of ever reaching this route.
+@router.get("/targets-export", dependencies=[Depends(get_current_active_superuser)])
+def get_devices_targets_export(session: SessionDep) -> PlainTextResponse:
+    """
+    Human-facing target-file export. Superuser-gated -- this reveals the
+    full address + hierarchy map in bulk, higher sensitivity than a single
+    device read. See build_targets_export() for the format.
+    """
+    return PlainTextResponse(build_targets_export(session))
+
+
+# pingsvc target sync (see "Live Target Sync" plan): pingsvc has no user
+# account, so these are gated by verify_pingsvc_token (a separate
+# shared-secret credential), not get_current_active_superuser. Also
+# registered before /{id}, same reason as /targets-export above.
+@router.get("/targets-hash", dependencies=[Depends(verify_pingsvc_token)])
+def get_devices_targets_hash(session: SessionDep) -> dict[str, str]:
+    """
+    SHA-256 of the current targets-export body, hex-encoded. pingsvc polls
+    this cheaply and only fetches /targets-export-internal when the hash
+    has actually changed.
+    """
+    body = build_targets_export(session)
+    return {"hash": hashlib.sha256(body.encode()).hexdigest()}
+
+
+@router.get("/targets-export-internal", dependencies=[Depends(verify_pingsvc_token)])
+def get_devices_targets_export_internal(session: SessionDep) -> PlainTextResponse:
+    """
+    Same body as /targets-export, for pingsvc's own use -- kept as a
+    distinct route (rather than accepting the pingsvc token on the
+    human-facing route too) so the existing superuser-only route's auth
+    surface never changes.
+    """
+    return PlainTextResponse(build_targets_export(session))
 
 
 @router.get("/{id}", response_model=DevicePublic)

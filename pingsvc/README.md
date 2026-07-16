@@ -32,6 +32,9 @@ ping pipeline.
 -batch-flush-ms // redis batch flush in milliseconds. def 200
 -metrics-addr // address to serve /metrics on. def :9090
 -role // pingsvc | exporter | both (ARGUS_ROLE). def pingsvc
+-backend-url // this zone's own backend, e.g. http://backend:8000 (ARGUS_BACKEND_URL). empty = target hot-reload disabled
+-sync-token // shared secret for the backend's targets-hash/targets-export-internal routes (ARGUS_PINGSVC_SYNC_TOKEN)
+-sync-interval // how often to poll the backend for target-list changes (ARGUS_TARGET_SYNC_INTERVAL_SECONDS). def 30s
 ```
 
 If no targets file is provided, it defaults to pinging `8.8.8.8` and `1.1.1.1`.
@@ -55,6 +58,31 @@ container (`cap_add:` in `compose.yml`/`swarm/stack.client.yml`) — without
 them every device reports down. See
 [../development.md](../development.md#running-a-full-argus-client--argus-server-locally)
 for a full local walkthrough of both roles talking to each other.
+
+## Target hot-reload
+
+By default pingsvc reads its target list from `-targets` once at startup --
+picking up a device/hierarchy change from the backend (see
+`plan/device-node-assignment-bridge-v1.md`) otherwise requires a manual
+`scripts/regenerate-targets.sh` + restart.
+
+Setting `-backend-url`/`ARGUS_BACKEND_URL` (this zone's own backend, e.g.
+`http://backend:8000` in Compose, `http://<stack-name>_backend:8000` in
+Swarm) turns on an independent goroutine that polls the backend's
+`GET /devices/targets-hash` every `-sync-interval` (default 30s) and only
+fetches the full `GET /devices/targets-export-internal` body when the hash
+has actually changed, then hot-swaps the live target list with no restart.
+Both routes are gated by `-sync-token`/`ARGUS_PINGSVC_SYNC_TOKEN`, which
+must match the backend's own `PINGSVC_SYNC_TOKEN` -- pingsvc has no user
+account, so this is a separate shared secret from the human JWT every other
+route uses. Off by default (empty `ARGUS_BACKEND_URL`), same opt-in posture
+as the exporter's S3 config.
+
+A successful reload also overwrites the local `-targets` file with the
+fetched body (so a later real restart picks up the same state) and runs the
+same removed-target Redis cleanup startup already does, so a
+deleted/unassigned device stops contributing stale up/down counts within one
+sync interval instead of only at the next restart.
 
 ## Development
 

@@ -132,6 +132,9 @@ services:
       - S3_SECRET_KEY=${S3_SECRET_KEY:-}
       - INGESTION_INTERVAL_SECONDS=${INGESTION_INTERVAL_SECONDS:-60}
       - STALENESS_THRESHOLD_SECONDS=${STALENESS_THRESHOLD_SECONDS:-120}
+      # pingsvc target hot-reload -- must match ARGUS_PINGSVC_SYNC_TOKEN
+      # below (same secret-sharing pattern as MYSQL_ROOT_PASSWORD)
+      - PINGSVC_SYNC_TOKEN=${PINGSVC_SYNC_TOKEN:-}
 
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/utils/health-check/"]
@@ -245,8 +248,18 @@ services:
       - ARGUS_S3_ACCESS_KEY=${ARGUS_S3_ACCESS_KEY:-}
       - ARGUS_S3_SECRET_KEY=${ARGUS_S3_SECRET_KEY:-}
       - ARGUS_SIGNING_KEY_PATH=${ARGUS_SIGNING_KEY_PATH:-}
+      # Target hot-reload (optional -- empty ARGUS_BACKEND_URL disables it).
+      # Compose DNS name, not localhost -- single stack, no ambiguity (see
+      # frontend's VITE_API_PROXY_TARGET above for the same convention).
+      - ARGUS_BACKEND_URL=${ARGUS_BACKEND_URL:-}
+      - ARGUS_PINGSVC_SYNC_TOKEN=${ARGUS_PINGSVC_SYNC_TOKEN:-}
+      - ARGUS_TARGET_SYNC_INTERVAL_SECONDS=${ARGUS_TARGET_SYNC_INTERVAL_SECONDS:-30}
     volumes:
-      - ./pingsvc/targets.txt:/etc/pingsvc/targets.txt:ro
+      # Read-write, not :ro -- a hot reload persists the freshly-fetched
+      # body here too, so a later real restart picks up the same state
+      # (see targetsync.go's syncTargetsCycle). Harmless when target sync
+      # is disabled: nothing else ever writes to this path.
+      - ./pingsvc/targets.txt:/etc/pingsvc/targets.txt
       # Spool dir AND the Ed25519 signing key live under /var/lib/argus --
       # the key MUST persist across restarts (a regenerated key breaks the
       # server's registered-key trust model entirely, see deployment.md).

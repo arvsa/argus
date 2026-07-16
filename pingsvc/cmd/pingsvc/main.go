@@ -352,6 +352,9 @@ func main() {
 	s3AccessKey := flag.String("s3-access-key", getenv("ARGUS_S3_ACCESS_KEY", ""), "object storage access key (empty = use the AWS SDK's default credential chain)")
 	s3SecretKey := flag.String("s3-secret-key", getenv("ARGUS_S3_SECRET_KEY", ""), "object storage secret key (empty = use the AWS SDK's default credential chain)")
 	signingKeyPath := flag.String("signing-key-path", getenv("ARGUS_SIGNING_KEY_PATH", ""), "path to this zone's ed25519 signing key (empty = don't sign pushed snapshots); generated on first run if the file doesn't exist yet")
+	backendURL := flag.String("backend-url", getenv("ARGUS_BACKEND_URL", ""), "base URL of this zone's own backend, e.g. http://backend:8000 (empty = target hot-reload disabled)")
+	syncToken := flag.String("sync-token", getenv("ARGUS_PINGSVC_SYNC_TOKEN", ""), "shared secret presented to the backend's targets-hash/targets-export-internal routes (must match the backend's PINGSVC_SYNC_TOKEN)")
+	syncInterval := flag.Duration("sync-interval", getenvDurationSeconds("ARGUS_TARGET_SYNC_INTERVAL_SECONDS", 30*time.Second), "how often to poll the backend for target-list changes")
 
 	flag.Parse()
 
@@ -479,7 +482,7 @@ func main() {
 	}
 
 	// load targets
-	targets := loadTargets(*targetsFile)
+	targetStore := newTargetStore(loadTargets(*targetsFile))
 
 	// Load the Lua script into Redis and keep the SHA
 	sha, err := loadPublishScript(ctx, rdb)
@@ -491,25 +494,17 @@ func main() {
 		log.Fatalf("failed to load reconcile lua script: %v", err)
 	}
 
-	// addr -> ancestor chain, looked up by workers when building each Event
-	// so a device's stats:node:<id> aggregation follows it from the target
-	// file, not just from state-change events built after this point.
-	targetsByAddr := make(map[string][]string, len(targets))
-	for _, t := range targets {
-		targetsByAddr[t.Addr] = t.NodeIDs
-	}
-
 	// Clean up any address that's no longer in the current target list at
 	// all (its Device row was deleted, or its line was hand-removed from
 	// targets.txt) -- there's no future ping for a removed address that
 	// could otherwise correct its old stats:node:<id> contribution or its
 	// pings:state/pings:index ghost entry.
-	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, targetsByAddr); err != nil {
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, targetStore.v.Load().targetsByAddr); err != nil {
 		log.Printf("reconcile removed targets: %v", err)
 	}
 
 	// pre-seed state and index so /state returns all devices immediately
-	for _, t := range targets {
+	for _, t := range targetStore.Targets() {
 		ts := nowMs()
 		ev := Event{Addr: t.Addr, OK: false, TS: ts, Interval: int64(interval.Milliseconds()), NodeIDs: t.NodeIDs}
 		raw, _ := json.Marshal(ev)
@@ -518,10 +513,28 @@ func main() {
 	}
 
 	log.Printf("starting pingsvc: %d targets, interval=%v, timeout=%v, redis=%s, workers=%d, batch=%d",
-		len(targets), *interval, *timeout, *redisAddr, *workerCount, *batchSize)
+		len(targetStore.Targets()), *interval, *timeout, *redisAddr, *workerCount, *batchSize)
+
+	// Target hot-reload (opt-in, see targetsync.go / "Live Target Sync"
+	// plan): polls the backend for changes and swaps targetStore in place,
+	// no restart needed. Gated purely on -backend-url being configured,
+	// same "empty = feature off" posture as the exporter's S3 config.
+	var stopTargetSync func()
+	if *backendURL != "" {
+		stopTargetSync = runTargetSync(ctx, TargetSyncConfig{
+			BackendURL:   *backendURL,
+			SyncToken:    *syncToken,
+			Interval:     *syncInterval,
+			TargetsFile:  *targetsFile,
+			Store:        targetStore,
+			RDB:          rdb,
+			ReconcileSha: reconcileSha,
+		})
+		log.Printf("targetsync: enabled, backend=%s, interval=%v", *backendURL, *syncInterval)
+	}
 
 	// Channels
-	jobs := make(chan string, len(targets)) // job queue per tick; buffered by #targets
+	jobs := make(chan string, len(targetStore.Targets())) // job queue per tick; buffered by #targets
 
 	// results buffer: batchSize*4 with caps
 	bufSize := (*batchSize) * 4
@@ -565,7 +578,7 @@ func main() {
 					p, err := ping.NewPinger(addr)
 					if err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetsByAddr[addr]}
+						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -579,7 +592,7 @@ func main() {
 					p.Timeout = *timeout
 					if err := p.Run(); err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetsByAddr[addr]}
+						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -611,7 +624,7 @@ func main() {
 						metrStateChanges.WithLabelValues("down").Inc()
 					}
 
-					ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp, NodeIDs: targetsByAddr[addr]}
+					ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp, NodeIDs: targetStore.NodeIDsFor(addr)}
 					raw, _ := json.Marshal(ev)
 					select {
 					case results <- raw:
@@ -747,7 +760,7 @@ loop:
 			break loop
 		case <-ticker.C:
 			// non-blocking enqueue: if jobs buffer is full we skip
-			for _, t := range targets {
+			for _, t := range targetStore.Targets() {
 				select {
 				case jobs <- t.Addr:
 				default:
@@ -770,6 +783,9 @@ loop:
 	if stopExporter != nil {
 		stopExporter()
 	}
+	if stopTargetSync != nil {
+		stopTargetSync()
+	}
 
 	log.Println("shutting down")
 }
@@ -782,15 +798,23 @@ loop:
 func loadTargets(targetsFile string) []Target {
 	if targetsFile != "" {
 		b, _ := os.ReadFile(targetsFile)
-		lines := splitLines(string(b))
-		out := make([]Target, len(lines))
-		for i, line := range lines {
-			out[i] = parseTargetLine(line)
-		}
-		return out
+		return parseTargets(string(b))
 	}
 	// example dummies
 	return []Target{{Addr: "8.8.8.8"}, {Addr: "1.1.1.1"}}
+}
+
+// parseTargets parses target-file content from raw text (one target per
+// line, see loadTargets's doc comment for the line format) -- shared by
+// loadTargets' file-reading path and targetsync.go's HTTP-fetched body, so
+// both callers stay byte-for-byte in agreement on the format.
+func parseTargets(body string) []Target {
+	lines := splitLines(body)
+	out := make([]Target, len(lines))
+	for i, line := range lines {
+		out[i] = parseTargetLine(line)
+	}
+	return out
 }
 
 func parseTargetLine(line string) Target {
@@ -807,6 +831,18 @@ func getenv(k, d string) string {
 		return v
 	}
 	return d
+}
+
+// getenvDurationSeconds reads an integer-seconds env var (matching the
+// backend Settings convention, e.g. INGESTION_INTERVAL_SECONDS), falling
+// back to def if unset or unparseable.
+func getenvDurationSeconds(k string, def time.Duration) time.Duration {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return def
 }
 
 func splitLines(s string) []string {

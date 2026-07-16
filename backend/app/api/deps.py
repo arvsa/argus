@@ -1,9 +1,10 @@
+import secrets
 from collections.abc import Generator
 from typing import Annotated
 from uuid import UUID
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import InvalidTokenError
 from pydantic import ValidationError
@@ -73,3 +74,17 @@ def get_current_active_superuser(current_user: CurrentUser) -> User:
             status_code=403, detail="The user doesn't have enough privileges"
         )
     return current_user
+
+
+def verify_pingsvc_token(x_pingsvc_token: str | None = Header(default=None)) -> None:
+    """Gate for pingsvc's target-sync routes (/devices/targets-hash,
+    /devices/targets-export-internal). pingsvc has no user account, so this
+    is a separate shared-secret credential from CurrentUser/
+    get_current_active_superuser, not a weaker version of either --  a human
+    JWT must not work here, and this token must not work on human-facing
+    routes. secrets.compare_digest avoids a timing side-channel on the
+    comparison."""
+    if not x_pingsvc_token or not secrets.compare_digest(
+        x_pingsvc_token, settings.PINGSVC_SYNC_TOKEN
+    ):
+        raise HTTPException(status_code=401, detail="Invalid or missing pingsvc token")
