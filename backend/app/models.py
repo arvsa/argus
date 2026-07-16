@@ -254,17 +254,23 @@ class NodesPublic(SQLModel):
 
 class DeviceBase(SQLModel):
     addr: str = Field(max_length=255, unique=True, index=True)
+    # Identity for device_key (plan/device-discovery-v1.md §2.3): mac when
+    # known, else addr. No uniqueness/index here -- MAC-based dedup on
+    # discovery ingestion is DiscoveredDevice's job (a separate, later
+    # plan step), not this table's.
+    mac: str | None = Field(default=None, max_length=32)
 
 
 class DeviceCreate(DeviceBase):
     node_id: uuid.UUID | None = None
 
 
-# addr/node_id are both freely editable post-creation (unlike Node, a
-# Device has no denormalized state derived from either field).
+# addr/node_id/mac are all freely editable post-creation (unlike Node, a
+# Device has no denormalized state derived from any of them).
 class DeviceUpdate(SQLModel):
     addr: str | None = Field(default=None, max_length=255)
     node_id: uuid.UUID | None = None
+    mac: str | None = Field(default=None, max_length=32)
 
 
 class Device(DeviceBase, table=True):
@@ -334,9 +340,7 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     # sized snapshots blow the sort buffer (error 1038) and 500 the zone
     # detail endpoint.
     __table_args__ = (
-        Index(
-            "ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"
-        ),
+        Index("ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)

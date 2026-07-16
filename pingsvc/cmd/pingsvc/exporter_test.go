@@ -150,6 +150,36 @@ func TestBuildSnapshot_IncludesDeviceStates(t *testing.T) {
 	}
 }
 
+func TestBuildSnapshot_KeyedByAddrEvenWhenDeviceKeyDiffers(t *testing.T) {
+	// Snapshot.Devices is the exported contract ("state per pinged
+	// address") -- it must stay keyed by Addr regardless of what Redis
+	// internally uses for state:device:*/pings:state (device_key once a MAC
+	// is known), or a downstream argus-server consumer's keying silently
+	// changes out from under it.
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	ev := Event{Addr: "10.0.4.9", DeviceKey: "AA:BB:CC:DD:EE:FF", OK: true, TS: 6000}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+
+	snap, err := buildSnapshot(ctx, rdb, "zone-1")
+	if err != nil {
+		t.Fatalf("buildSnapshot() error = %v", err)
+	}
+	got, ok := snap.Devices["10.0.4.9"]
+	if !ok {
+		t.Fatalf("Devices[%q] missing, want present (keyed by addr, not device_key)", "10.0.4.9")
+	}
+	if !got.OK || got.TS != 6000 {
+		t.Errorf("Devices[%q] = %+v, want {OK:true TS:6000}", "10.0.4.9", got)
+	}
+	if _, ok := snap.Devices["AA:BB:CC:DD:EE:FF"]; ok {
+		t.Errorf("Devices[%q] present, want absent (must not be keyed by device_key)", "AA:BB:CC:DD:EE:FF")
+	}
+}
+
 func TestBuildSnapshot_SkipsMalformedStateEntries(t *testing.T) {
 	_, rdb, sha := newTestRedis(t)
 	ctx := context.Background()
