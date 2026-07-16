@@ -68,6 +68,7 @@ export const nodeNameSchema = z.object({
 
 export const deviceAssignmentSchema = z.object({
   addr: z.string().min(1, "Address is required"),
+  hostname: z.string().optional(),
 });
 
 // Node creation additionally needs the NodeType to create it as -- see

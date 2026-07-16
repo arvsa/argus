@@ -16,6 +16,9 @@ from app.api.deps import (
 from app.core.config import settings
 from app.models import (
     Device,
+    DeviceBulkImportRequest,
+    DeviceBulkImportResponse,
+    DeviceBulkImportRowResult,
     DeviceCreate,
     DevicePublic,
     DevicesPublic,
@@ -244,6 +247,33 @@ def reject_discovered_device(session: SessionDep, id: uuid.UUID) -> Any:
     return _discovered_public(
         crud.reject_discovered_device(session=session, discovered=discovered)
     )
+
+
+# Bulk import (plan/device-naming-and-bulk-import-v1.md §2.6). Registered
+# before /{id}, same reason as /targets-export above: "bulk-import" would
+# otherwise be swallowed by /{id} and fail UUID validation instead of ever
+# reaching this route.
+@router.post(
+    "/bulk-import",
+    dependencies=[Depends(get_current_active_superuser)],
+    response_model=DeviceBulkImportResponse,
+)
+def bulk_import_devices(session: SessionDep, batch: DeviceBulkImportRequest) -> Any:
+    """
+    Import many Devices from a client-parsed CSV in one request. Applies
+    POST /devices/'s exact per-row duplicate/orphan-reassignment logic (see
+    crud.bulk_import_device_row) and reports a per-row outcome rather than
+    all-or-nothing -- one bad row in a large batch doesn't block the rest.
+    """
+    results = []
+    for i, row in enumerate(batch.rows):
+        outcome, device, error = crud.bulk_import_device_row(session=session, row=row)
+        results.append(
+            DeviceBulkImportRowResult(
+                row=i, addr=row.addr, outcome=outcome, error=error, device=device
+            )
+        )
+    return DeviceBulkImportResponse(results=results)
 
 
 @router.get("/{id}", response_model=DevicePublic)

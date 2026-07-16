@@ -10,6 +10,7 @@ vi.mock("@/api/deviceAssignments", () => ({
   getDeviceAssignments: vi.fn(),
   createDeviceAssignment: vi.fn(),
   deleteDeviceAssignment: vi.fn(),
+  bulkImportDeviceAssignments: vi.fn(),
 }));
 
 function device(overrides: Partial<DeviceAssignment> = {}): DeviceAssignment {
@@ -77,6 +78,72 @@ describe("AssignedDevices", () => {
       addr: "10.0.1.9",
       node_id: "node-1",
     });
+  });
+
+  it("adds a device with a name via the Add form", async () => {
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(deviceAssignmentsApi.createDeviceAssignment).mockResolvedValue(device());
+    const user = userEvent.setup();
+    renderComponent("node-1");
+
+    await screen.findByText(/no devices assigned to this node yet/i);
+    await user.click(screen.getByRole("button", { name: /^add$/i }));
+    await user.type(screen.getByLabelText(/address/i), "10.0.1.9");
+    await user.type(screen.getByLabelText(/^name/i), "floor-1-switch");
+    await user.click(screen.getByRole("button", { name: /^add device$/i }));
+
+    expect(deviceAssignmentsApi.createDeviceAssignment).toHaveBeenCalledWith({
+      addr: "10.0.1.9",
+      node_id: "node-1",
+      hostname: "floor-1-switch",
+    });
+  });
+
+  it("bulk-imports devices from pasted CSV, scoped to this node", async () => {
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(deviceAssignmentsApi.bulkImportDeviceAssignments).mockResolvedValue({
+      results: [
+        { row: 0, addr: "10.0.1.10", outcome: "created", error: null, device: device() },
+        {
+          row: 1,
+          addr: "10.0.1.11",
+          outcome: "skipped_duplicate",
+          error: null,
+          device: null,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderComponent("node-1");
+
+    await screen.findByText(/no devices assigned to this node yet/i);
+    await user.click(screen.getByRole("button", { name: /bulk import/i }));
+    await user.type(
+      screen.getByLabelText(/paste csv/i),
+      "addr,hostname{Enter}10.0.1.10,a{Enter}10.0.1.11,b"
+    );
+    await user.click(screen.getByRole("button", { name: /^import$/i }));
+
+    expect(deviceAssignmentsApi.bulkImportDeviceAssignments).toHaveBeenCalledWith([
+      { addr: "10.0.1.10", hostname: "a", node_id: "node-1" },
+      { addr: "10.0.1.11", hostname: "b", node_id: "node-1" },
+    ]);
+    expect(await screen.findByText(/1 created/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 skipped/i)).toBeInTheDocument();
+  });
+
+  it("shows a client-side parse error without calling the API", async () => {
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({ data: [], count: 0 });
+    const user = userEvent.setup();
+    renderComponent("node-1");
+
+    await screen.findByText(/no devices assigned to this node yet/i);
+    await user.click(screen.getByRole("button", { name: /bulk import/i }));
+    await user.type(screen.getByLabelText(/paste csv/i), "hostname{Enter}floor-1-switch");
+    await user.click(screen.getByRole("button", { name: /^import$/i }));
+
+    expect(await screen.findByText(/missing required "addr" column/i)).toBeInTheDocument();
+    expect(deviceAssignmentsApi.bulkImportDeviceAssignments).not.toHaveBeenCalled();
   });
 
   it("removes a device after confirming", async () => {
