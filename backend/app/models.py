@@ -340,9 +340,7 @@ class ClientSnapshot(ClientSnapshotBase, table=True):
     # sized snapshots blow the sort buffer (error 1038) and 500 the zone
     # detail endpoint.
     __table_args__ = (
-        Index(
-            "ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"
-        ),
+        Index("ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
