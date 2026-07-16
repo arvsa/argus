@@ -12,6 +12,8 @@ from app.models import (
     DeviceCreate,
     DiscoveredDevice,
     DiscoveredDeviceReport,
+    InfraPollTarget,
+    InfraPollTargetCreate,
     Item,
     ItemCreate,
     Node,
@@ -195,6 +197,24 @@ def upsert_discovered_device(
         db_obj.discovered_via = report.discovered_via or db_obj.discovered_via
         db_obj.last_seen_at = now
 
+    session.add(db_obj)
+    session.commit()
+    session.refresh(db_obj)
+    return db_obj
+
+
+def get_infra_poll_target_by_addr(
+    *, session: Session, addr: str
+) -> InfraPollTarget | None:
+    return session.exec(
+        select(InfraPollTarget).where(InfraPollTarget.addr == addr)
+    ).first()
+
+
+def create_infra_poll_target(
+    *, session: Session, target_create: InfraPollTargetCreate
+) -> InfraPollTarget:
+    db_obj = InfraPollTarget.model_validate(target_create)
     session.add(db_obj)
     session.commit()
     session.refresh(db_obj)
