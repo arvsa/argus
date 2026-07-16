@@ -125,7 +125,7 @@ def read_infra_poll_targets_internal(session: SessionDep) -> Any:
     discovery cycle (plan §2.6).
     """
     targets = session.exec(
-        select(InfraPollTarget).where(InfraPollTarget.enabled.is_(True))
+        select(InfraPollTarget).where(InfraPollTarget.enabled == True)  # noqa: E712
     ).all()
     return [
         InfraPollTargetInternal(addr=t.addr, community=t.community, kind=t.kind)
