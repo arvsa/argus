@@ -248,6 +248,27 @@ def reject_discovered_device(
     return discovered
 
 
+def discovered_device_is_stale(
+    *, discovered: DiscoveredDevice, threshold_seconds: int
+) -> bool:
+    """A DiscoveredDevice not reconfirmed by any infra poll cycle in over
+    threshold_seconds -- surfaced to the operator (plan/device-discovery-
+    v1.md §2.5) rather than silently trusted forever. Mirrors
+    get_stale_zones' time-delta math, but per-row rather than a filtered
+    list, since GET /devices/discovered shows every candidate, not just
+    the stale ones.
+
+    get_stale_zones compares in the SQL query itself, so the DB driver
+    handles it; here it's a plain Python comparison, and MySQL round-trips
+    a DATETIME column as timezone-naive even though get_datetime_utc()
+    wrote an aware UTC value -- normalize before comparing."""
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
+    last_seen_at = discovered.last_seen_at
+    if last_seen_at.tzinfo is None:
+        last_seen_at = last_seen_at.replace(tzinfo=timezone.utc)
+    return last_seen_at < cutoff
+
+
 def create_client_snapshot(
     *, session: Session, snapshot_create: ClientSnapshotCreate
 ) -> ClientSnapshot:

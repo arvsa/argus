@@ -247,3 +247,59 @@ def test_targets_export_never_includes_a_pending_candidate(client: TestClient) -
     r = client.get(f"{API}/devices/targets-export", headers=su_headers)
     assert r.status_code == 200, r.text
     assert addr not in r.text
+
+
+# ── poll-cycle-based staleness (plan §2.5) ──────────────────────────────────
+# pingsvc only ever knows what it currently sees in a poll cycle -- it has
+# no way to tell "missing" from "gone forever" -- so staleness can only be
+# computed where last_seen_at is actually read: here, at GET /devices/discovered.
+
+
+def test_discovered_device_is_stale_past_threshold(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "DISCOVERY_STALE_THRESHOLD_SECONDS", 0)
+    addr = "198.51.100.19"
+    client.post(
+        f"{API}/devices/discovered",
+        headers=_pingsvc_headers(),
+        json={"reports": [_report(addr=addr)]},
+    )
+
+    su_headers = _su(client)
+    r = client.get(f"{API}/devices/discovered", headers=su_headers)
+    assert r.status_code == 200, r.text
+    matches = [d for d in r.json()["data"] if d["addr"] == addr]
+    assert len(matches) == 1
+    assert matches[0]["is_stale"] is True
+
+
+def test_discovered_device_not_stale_within_threshold(client: TestClient) -> None:
+    addr = "198.51.100.20"
+    client.post(
+        f"{API}/devices/discovered",
+        headers=_pingsvc_headers(),
+        json={"reports": [_report(addr=addr)]},
+    )
+
+    su_headers = _su(client)
+    r = client.get(f"{API}/devices/discovered", headers=su_headers)
+    assert r.status_code == 200, r.text
+    matches = [d for d in r.json()["data"] if d["addr"] == addr]
+    assert len(matches) == 1
+    assert matches[0]["is_stale"] is False
+
+
+def test_approve_response_includes_is_stale(client: TestClient) -> None:
+    addr = "198.51.100.21"
+    ingest = client.post(
+        f"{API}/devices/discovered",
+        headers=_pingsvc_headers(),
+        json={"reports": [_report(addr=addr)]},
+    )
+    disc_id = ingest.json()["data"][0]["id"]
+
+    su_headers = _su(client)
+    r = client.post(f"{API}/devices/discovered/{disc_id}/approve", headers=su_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["is_stale"] is False

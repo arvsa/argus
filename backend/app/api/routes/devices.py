@@ -147,6 +147,27 @@ def get_devices_targets_export_internal(session: SessionDep) -> PlainTextRespons
 # ever reaching these routes.
 
 
+def _discovered_public(discovered: DiscoveredDevice) -> DiscoveredDevicePublic:
+    """is_stale is computed at read time (never a stored column), so every
+    response touching a DiscoveredDevice builds its public shape through
+    here rather than relying on response_model to coerce the raw ORM
+    object automatically."""
+    return DiscoveredDevicePublic(
+        id=discovered.id,
+        addr=discovered.addr,
+        mac=discovered.mac,
+        hostname=discovered.hostname,
+        discovered_via=discovered.discovered_via,
+        status=discovered.status,
+        first_seen_at=discovered.first_seen_at,
+        last_seen_at=discovered.last_seen_at,
+        is_stale=crud.discovered_device_is_stale(
+            discovered=discovered,
+            threshold_seconds=settings.DISCOVERY_STALE_THRESHOLD_SECONDS,
+        ),
+    )
+
+
 @router.post("/discovered", dependencies=[Depends(verify_pingsvc_token)])
 def report_discovered_devices(
     session: SessionDep, batch: DiscoveredDeviceReportBatch
@@ -167,7 +188,9 @@ def report_discovered_devices(
                 session=session, discovered=discovered
             )
         results.append(discovered)
-    return DiscoveredDevicesPublic(data=results, count=len(results))
+    return DiscoveredDevicesPublic(
+        data=[_discovered_public(d) for d in results], count=len(results)
+    )
 
 
 @router.get(
@@ -181,7 +204,9 @@ def read_discovered_devices(session: SessionDep) -> Any:
     is a human review workflow, not a pingsvc-facing route).
     """
     devices = session.exec(select(DiscoveredDevice)).all()
-    return DiscoveredDevicesPublic(data=devices, count=len(devices))
+    return DiscoveredDevicesPublic(
+        data=[_discovered_public(d) for d in devices], count=len(devices)
+    )
 
 
 @router.post(
@@ -198,7 +223,9 @@ def approve_discovered_device(session: SessionDep, id: uuid.UUID) -> Any:
     discovered = session.get(DiscoveredDevice, id)
     if not discovered:
         raise HTTPException(status_code=404, detail="Discovered device not found")
-    return crud.approve_discovered_device(session=session, discovered=discovered)
+    return _discovered_public(
+        crud.approve_discovered_device(session=session, discovered=discovered)
+    )
 
 
 @router.post(
@@ -214,7 +241,9 @@ def reject_discovered_device(session: SessionDep, id: uuid.UUID) -> Any:
     discovered = session.get(DiscoveredDevice, id)
     if not discovered:
         raise HTTPException(status_code=404, detail="Discovered device not found")
-    return crud.reject_discovered_device(session=session, discovered=discovered)
+    return _discovered_public(
+        crud.reject_discovered_device(session=session, discovered=discovered)
+    )
 
 
 @router.get("/{id}", response_model=DevicePublic)

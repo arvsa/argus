@@ -145,6 +145,14 @@ class Settings(BaseSettings):
     # (plan/device-discovery-v1.md §2.7).
     AUTO_POPULATE_DISCOVERED_DEVICES: bool = False
 
+    # A DiscoveredDevice not reconfirmed by any infra poll cycle in this
+    # long is surfaced as stale to the operator, not silently trusted
+    # forever (plan §2.5) -- a small multiple of pingsvc's own discovery
+    # cycle (default 60s), not the interval itself, to tolerate one missed
+    # cycle. Same pattern as STALENESS_THRESHOLD_SECONDS above, applied to
+    # discovery candidates instead of zones.
+    DISCOVERY_STALE_THRESHOLD_SECONDS: int = 300
+
     def _check_default_secret(self, var_name: str, value: str | None) -> None:
         if value == "changethis":
             message = (

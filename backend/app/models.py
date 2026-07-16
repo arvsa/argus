@@ -359,6 +359,10 @@ class DiscoveredDevicePublic(DiscoveredDeviceBase):
     id: uuid.UUID
     first_seen_at: datetime
     last_seen_at: datetime
+    # Computed at read time (settings.DISCOVERY_STALE_THRESHOLD_SECONDS
+    # against last_seen_at), never a stored column -- see
+    # crud.discovered_device_is_stale.
+    is_stale: bool
 
 
 class DiscoveredDevicesPublic(SQLModel):
