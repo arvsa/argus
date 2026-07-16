@@ -355,6 +355,7 @@ func main() {
 	backendURL := flag.String("backend-url", getenv("ARGUS_BACKEND_URL", ""), "base URL of this zone's own backend, e.g. http://backend:8000 (empty = target hot-reload disabled)")
 	syncToken := flag.String("sync-token", getenv("ARGUS_PINGSVC_SYNC_TOKEN", ""), "shared secret presented to the backend's targets-hash/targets-export-internal routes (must match the backend's PINGSVC_SYNC_TOKEN)")
 	syncInterval := flag.Duration("sync-interval", getenvDurationSeconds("ARGUS_TARGET_SYNC_INTERVAL_SECONDS", 30*time.Second), "how often to poll the backend for target-list changes")
+	discoveryInterval := flag.Duration("discovery-interval", getenvDurationSeconds("ARGUS_DISCOVERY_INTERVAL_SECONDS", 60*time.Second), "how often to poll configured infrastructure targets for ARP-table discovery (less urgent than -sync-interval -- discovery doesn't affect live ping targets)")
 
 	flag.Parse()
 
@@ -531,6 +532,21 @@ func main() {
 			ReconcileSha: reconcileSha,
 		})
 		log.Printf("targetsync: enabled, backend=%s, interval=%v", *backendURL, *syncInterval)
+	}
+
+	// Infra discovery (opt-in, see discovery.go / plan/device-discovery-v1.md
+	// §2.8): reuses the same backend connection as target-sync -- no new
+	// pingsvc-side connection config at all. Naturally a no-op whenever the
+	// backend has zero InfraPollTarget rows configured, so this is gated
+	// purely on -backend-url like target-sync, not a separate flag.
+	var stopDiscovery func()
+	if *backendURL != "" {
+		stopDiscovery = runDiscovery(ctx, DiscoveryConfig{
+			BackendURL: *backendURL,
+			SyncToken:  *syncToken,
+			Interval:   *discoveryInterval,
+		})
+		log.Printf("discovery: enabled, backend=%s, interval=%v", *backendURL, *discoveryInterval)
 	}
 
 	// Channels
@@ -785,6 +801,9 @@ loop:
 	}
 	if stopTargetSync != nil {
 		stopTargetSync()
+	}
+	if stopDiscovery != nil {
+		stopDiscovery()
 	}
 
 	log.Println("shutting down")
