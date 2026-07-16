@@ -98,14 +98,18 @@ func buildSnapshot(ctx context.Context, rdb redis.Cmdable, zoneID string) (Snaps
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("hgetall pings:state: %w", err)
 	}
-	for addr, raw := range states {
+	for _, raw := range states {
 		var ev Event
 		if err := json.Unmarshal([]byte(raw), &ev); err != nil {
 			// Malformed snapshot entries shouldn't take down the whole
 			// export cycle -- skip and keep going.
 			continue
 		}
-		snap.Devices[addr] = DeviceState{OK: ev.OK, TS: ev.TS}
+		// Keyed by ev.Addr (the decoded payload), not the pings:state hash
+		// key -- that key is device_key once a MAC is known, and the
+		// exported Snapshot.Devices contract is "state per pinged address,"
+		// independent of Redis's internal keying.
+		snap.Devices[ev.Addr] = DeviceState{OK: ev.OK, TS: ev.TS}
 	}
 
 	return snap, nil

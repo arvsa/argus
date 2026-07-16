@@ -14,19 +14,26 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// TargetInfo is what TargetStore keeps per address: the ancestor chain plus
+// whatever device_key (MAC, typically) the backend has on file for it.
+type TargetInfo struct {
+	NodeIDs   []string
+	DeviceKey string
+}
+
 // targetState bundles the two pieces of state that must change together
-// atomically on a hot reload: the target list itself and the addr->ancestor
+// atomically on a hot reload: the target list itself and the addr->info
 // lookup workers use per-event (mirrors the targets/targetsByAddr pair
 // main() used to build once at startup, see loadTargets).
 type targetState struct {
 	targets       []Target
-	targetsByAddr map[string][]string
+	targetsByAddr map[string]TargetInfo
 }
 
 func newTargetState(targets []Target) *targetState {
-	byAddr := make(map[string][]string, len(targets))
+	byAddr := make(map[string]TargetInfo, len(targets))
 	for _, t := range targets {
-		byAddr[t.Addr] = t.NodeIDs
+		byAddr[t.Addr] = TargetInfo{NodeIDs: t.NodeIDs, DeviceKey: t.DeviceKey}
 	}
 	return &targetState{targets: targets, targetsByAddr: byAddr}
 }
@@ -57,7 +64,34 @@ func (s *TargetStore) Targets() []Target {
 // NodeIDsFor returns addr's current ancestor chain, for workers to attach
 // to each Event.
 func (s *TargetStore) NodeIDsFor(addr string) []string {
-	return s.v.Load().targetsByAddr[addr]
+	return s.v.Load().targetsByAddr[addr].NodeIDs
+}
+
+// DeviceKeyFor returns addr's device_key if the backend has one on file,
+// else addr itself -- the one fallback chokepoint every reader of the store
+// goes through, so callers never re-implement the "no MAC on file" case.
+func (s *TargetStore) DeviceKeyFor(addr string) string {
+	if info, ok := s.v.Load().targetsByAddr[addr]; ok && info.DeviceKey != "" {
+		return info.DeviceKey
+	}
+	return addr
+}
+
+// LiveDeviceKeys returns the set of device_keys currently represented in
+// the target list (each target's DeviceKeyFor result), deduplicated -- used
+// by reconcileRemovedTargets to know which state:device:<device_key> keys
+// are still live.
+func (s *TargetStore) LiveDeviceKeys() map[string]struct{} {
+	state := s.v.Load()
+	out := make(map[string]struct{}, len(state.targets))
+	for _, t := range state.targets {
+		key := t.DeviceKey
+		if key == "" {
+			key = t.Addr
+		}
+		out[key] = struct{}{}
+	}
+	return out
 }
 
 func (s *TargetStore) set(targets []Target) {
@@ -155,8 +189,7 @@ func syncTargetsCycle(ctx context.Context, cfg TargetSyncConfig, lastHash string
 	}
 
 	if cfg.RDB != nil && cfg.ReconcileSha != "" {
-		newByAddr := cfg.Store.v.Load().targetsByAddr
-		if err := reconcileRemovedTargets(ctx, cfg.RDB, cfg.ReconcileSha, newByAddr); err != nil {
+		if err := reconcileRemovedTargets(ctx, cfg.RDB, cfg.ReconcileSha, cfg.Store.LiveDeviceKeys()); err != nil {
 			log.Printf("targetsync: reconcile removed targets: %v", err)
 		}
 	}

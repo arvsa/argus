@@ -50,6 +50,24 @@ def read_devices(
     return DevicesPublic(data=devices, count=count)
 
 
+def _target_line(addr: str, ancestors: str, mac: str | None) -> str:
+    """
+    One pingsvc target-file line (see pingsvc/cmd/pingsvc/main.go's
+    parseTargetLine): addr, an optional semicolon-joined ancestor/node_id
+    chain, and an optional device_key (mac) -- in that order, each only
+    present when it applies. An unassigned device with a known mac still
+    needs the ancestors field present as an empty string ("addr,,mac"),
+    since "addr,mac" would be indistinguishable from the existing 2-field
+    "assigned, no mac" format and get misparsed as a bogus single-entry
+    NodeIDs chain.
+    """
+    if mac:
+        return f"{addr},{ancestors},{mac}"
+    if ancestors:
+        return f"{addr},{ancestors}"
+    return addr
+
+
 def build_targets_export(session: Session) -> str:
     """
     Render every Device as pingsvc's target-file body (see
@@ -57,7 +75,8 @@ def build_targets_export(session: Session) -> str:
     plan/device-node-assignment-bridge-v1.md): one line per device, either
     a bare "addr" (unassigned) or "addr,ancestor1;ancestor2;...;node_id"
     (root-first ancestors from Node.path_ids, then the assigned node
-    itself last). Shared by the human-facing /targets-export and the
+    itself last), with an optional trailing ",mac" device_key field (see
+    _target_line). Shared by the human-facing /targets-export and the
     pingsvc-facing /targets-hash and /targets-export-internal below, so
     the hash pingsvc compares against can never drift from the body it
     would actually fetch.
@@ -65,17 +84,15 @@ def build_targets_export(session: Session) -> str:
     devices = session.exec(select(Device)).all()
     lines = []
     for device in devices:
-        if device.node_id is None:
-            lines.append(device.addr)
-            continue
-        node = session.get(Node, device.node_id)
-        if node is None:
-            # Shouldn't happen (ondelete=SET NULL keeps this in sync), but
-            # degrade to a bare address rather than erroring the whole export.
-            lines.append(device.addr)
-            continue
-        chain = [*node.path_ids, str(node.id)]
-        lines.append(f"{device.addr},{';'.join(chain)}")
+        ancestors = ""
+        if device.node_id is not None:
+            node = session.get(Node, device.node_id)
+            if node is not None:
+                # Shouldn't be None (ondelete=SET NULL keeps this in sync),
+                # but degrade to no ancestors rather than erroring the
+                # whole export.
+                ancestors = ";".join([*node.path_ids, str(node.id)])
+        lines.append(_target_line(device.addr, ancestors, device.mac))
     return "\n".join(lines) + ("\n" if lines else "")
 
 
