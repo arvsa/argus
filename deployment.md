@@ -2,6 +2,8 @@
 
 You can deploy Argus using Docker Compose to a remote server — as a single stack, or as one or more `argus-client` zones plus a central `argus-server` (see [Multi-zone configuration](#multi-zone-configuration)).
 
+> Deploying the two-instance AWS demo (client EC2 + server EC2 + S3)? Follow the command-by-command runbook in **[deployment-tutorial.md](deployment-tutorial.md)** — this document is its reference companion.
+
 This project expects you to have a Traefik proxy handling communication to the outside world and HTTPS certificates.
 
 You can use CI/CD (continuous integration and continuous deployment) systems to deploy automatically, there are already configurations to do it with GitHub Actions.
