@@ -258,7 +258,12 @@ def test_targets_export_never_includes_a_pending_candidate(client: TestClient) -
 def test_discovered_device_is_stale_past_threshold(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "DISCOVERY_STALE_THRESHOLD_SECONDS", 0)
+    # A negative threshold puts the cutoff in the future (now - (-3600) =
+    # now + 1h), so last_seen_at is guaranteed stale with a full hour of
+    # margin -- a threshold of exactly 0 races against MySQL's DATETIME
+    # column truncating to whole-second precision, since the cutoff and
+    # last_seen_at can land in the same second and tie.
+    monkeypatch.setattr(settings, "DISCOVERY_STALE_THRESHOLD_SECONDS", -3600)
     addr = "198.51.100.19"
     client.post(
         f"{API}/devices/discovered",
