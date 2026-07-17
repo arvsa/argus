@@ -9,6 +9,7 @@ from app.models import (
     ClientSnapshot,
     ClientSnapshotCreate,
     Device,
+    DeviceBulkImportRow,
     DeviceCreate,
     DiscoveredDevice,
     DiscoveredDeviceReport,
@@ -155,6 +156,48 @@ def create_device(*, session: Session, device_create: DeviceCreate) -> Device:
     session.commit()
     session.refresh(db_obj)
     return db_obj
+
+
+def bulk_import_device_row(
+    *, session: Session, row: DeviceBulkImportRow
+) -> tuple[str, Device | None, str | None]:
+    """
+    Apply one bulk-import CSV row (plan/device-naming-and-bulk-import-v1.md
+    §2.6) using the exact same duplicate/orphan-reassignment semantics as
+    POST /devices/ (see the create_device route) -- returns
+    (outcome, device_or_none, error_or_none) instead of raising, so one bad
+    row in a large batch never blocks the rest.
+    """
+    if not row.addr or not row.addr.strip():
+        return "error", None, "Missing address"
+
+    existing = get_device_by_addr(session=session, addr=row.addr)
+    if existing:
+        if existing.node_id is None and row.node_id is not None:
+            existing.node_id = row.node_id
+            if row.hostname is not None:
+                existing.hostname = row.hostname
+            if row.mac is not None:
+                existing.mac = row.mac
+            if row.timezone is not None:
+                existing.timezone = row.timezone
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            return "reassigned", existing, None
+        return "skipped_duplicate", None, None
+
+    device = create_device(
+        session=session,
+        device_create=DeviceCreate(
+            addr=row.addr,
+            hostname=row.hostname,
+            mac=row.mac,
+            timezone=row.timezone,
+            node_id=row.node_id,
+        ),
+    )
+    return "created", device, None
 
 
 def upsert_discovered_device(

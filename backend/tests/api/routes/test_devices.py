@@ -527,6 +527,138 @@ def test_targets_export_internal_rejects_a_superuser_jwt(client: TestClient) -> 
     assert r.status_code == 401
 
 
+# ── Bulk import (plan/device-naming-and-bulk-import-v1.md §2.6) ─────────
+# CSV parsing happens client-side; this endpoint takes pre-parsed JSON
+# rows and applies the exact same per-row duplicate/orphan-reassignment
+# logic as POST /devices/, reporting a per-row outcome instead of
+# all-or-nothing.
+
+
+def test_bulk_import_creates_new_devices(client: TestClient) -> None:
+    headers = _su(client)
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={
+            "rows": [
+                {"addr": "203.0.113.50", "hostname": "floor-1-switch"},
+                {"addr": "203.0.113.51", "hostname": "floor-2-switch"},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 2
+    assert all(res["outcome"] == "created" for res in results)
+    assert results[0]["device"]["hostname"] == "floor-1-switch"
+    assert results[1]["device"]["hostname"] == "floor-2-switch"
+
+
+def test_bulk_import_skips_unassigned_duplicate_addr(client: TestClient) -> None:
+    headers = _su(client)
+    addr = "203.0.113.52"
+    client.post(f"{API}/devices/", headers=headers, json={"addr": addr})
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "skipped_duplicate"
+
+
+def test_bulk_import_skips_already_assigned_elsewhere_addr(client: TestClient) -> None:
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "203.0.113.53"
+    client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    )
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr, "node_id": node_b["id"]}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "skipped_duplicate"
+
+
+def test_bulk_import_reassigns_orphaned_addr_when_node_given(client: TestClient) -> None:
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "203.0.113.54"
+    device = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    ).json()
+    client.delete(f"{API}/nodes/{node_a['id']}", headers=headers)
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr, "node_id": node_b["id"]}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "reassigned"
+    assert results[0]["device"]["id"] == device["id"]
+    assert results[0]["device"]["node_id"] == node_b["id"]
+
+
+def test_bulk_import_reports_malformed_row_without_blocking_others(
+    client: TestClient,
+) -> None:
+    headers = _su(client)
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={
+            "rows": [
+                {"addr": "203.0.113.55"},
+                {"hostname": "no-addr-here"},
+                {"addr": "203.0.113.56"},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 3
+    assert results[0]["outcome"] == "created"
+    assert results[1]["outcome"] == "error"
+    assert results[1]["error"]
+    assert results[2]["outcome"] == "created"
+
+
+def test_bulk_import_requires_superuser(
+    client: TestClient, normal_user_token_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=normal_user_token_headers,
+        json={"rows": [{"addr": "203.0.113.57"}]},
+    )
+    assert r.status_code == 403
+
+
 def test_targets_export_internal_matches_human_facing_export(
     client: TestClient,
 ) -> None:

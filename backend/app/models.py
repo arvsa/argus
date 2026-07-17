@@ -310,6 +310,39 @@ class DevicesPublic(SQLModel):
     count: int
 
 
+# ========== Bulk import (plan/device-naming-and-bulk-import-v1.md §2.6) =====
+# CSV parsing happens client-side; this is the pre-parsed-JSON-rows shape the
+# backend actually receives.
+
+
+class DeviceBulkImportRow(SQLModel):
+    # addr is optional here (not required, unlike DeviceCreate.addr) so a
+    # malformed row -- missing its address -- can be reported as a
+    # per-row "error" outcome instead of failing request validation (and
+    # therefore the whole batch) before any row is even looked at.
+    addr: str | None = None
+    hostname: str | None = None
+    mac: str | None = None
+    timezone: str | None = None
+    node_id: uuid.UUID | None = None
+
+
+class DeviceBulkImportRequest(SQLModel):
+    rows: list[DeviceBulkImportRow]
+
+
+class DeviceBulkImportRowResult(SQLModel):
+    row: int
+    addr: str | None
+    outcome: str  # "created" | "reassigned" | "skipped_duplicate" | "error"
+    error: str | None = None
+    device: DevicePublic | None = None
+
+
+class DeviceBulkImportResponse(SQLModel):
+    results: list[DeviceBulkImportRowResult]
+
+
 # ========== Device discovery (see plan/device-discovery-v1.md §2.2) ==========
 #
 # A separate candidate pool, not written straight into Device: an unreviewed

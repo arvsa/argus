@@ -383,6 +383,9 @@ func main() {
 	syncToken := flag.String("sync-token", getenv("ARGUS_PINGSVC_SYNC_TOKEN", ""), "shared secret presented to the backend's targets-hash/targets-export-internal routes (must match the backend's PINGSVC_SYNC_TOKEN)")
 	syncInterval := flag.Duration("sync-interval", getenvDurationSeconds("ARGUS_TARGET_SYNC_INTERVAL_SECONDS", 30*time.Second), "how often to poll the backend for target-list changes")
 	discoveryInterval := flag.Duration("discovery-interval", getenvDurationSeconds("ARGUS_DISCOVERY_INTERVAL_SECONDS", 60*time.Second), "how often to poll configured infrastructure targets for ARP-table discovery (less urgent than -sync-interval -- discovery doesn't affect live ping targets)")
+	snmpTimeout := flag.Duration("snmp-timeout", getenvDurationSeconds("ARGUS_SNMP_TIMEOUT_SECONDS", 2*time.Second), "per-request timeout for infra-target ARP-table polling and endpoint hostname enrichment (plan §4: short timeout, low retry count so polling unreachable/filtered targets doesn't dominate a discovery cycle)")
+	snmpRetries := flag.Int("snmp-retries", 1, "retry count for infra-target ARP-table polling and endpoint hostname enrichment")
+	enrichCommunity := flag.String("snmp-enrich-community", getenv("ARGUS_SNMP_ENRICH_COMMUNITY", "public"), "SNMP v2c community used for endpoint hostname enrichment (snmp_enrich.go) -- separate from each InfraPollTarget's own credential, which is only used for that target's own ARP-table poll")
 
 	flag.Parse()
 
@@ -573,9 +576,12 @@ func main() {
 	var stopDiscovery func()
 	if *backendURL != "" {
 		stopDiscovery = runDiscovery(ctx, DiscoveryConfig{
-			BackendURL: *backendURL,
-			SyncToken:  *syncToken,
-			Interval:   *discoveryInterval,
+			BackendURL:      *backendURL,
+			SyncToken:       *syncToken,
+			Interval:        *discoveryInterval,
+			SNMPTimeout:     *snmpTimeout,
+			SNMPRetries:     *snmpRetries,
+			EnrichCommunity: *enrichCommunity,
 		})
 		log.Printf("discovery: enabled, backend=%s, interval=%v", *backendURL, *discoveryInterval)
 	}
