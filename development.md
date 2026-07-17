@@ -9,7 +9,7 @@ For a one-shot single-stack local setup, see the [Quick Start in README.md](READ
 The stack is defined across two files, both used automatically by plain `docker compose` commands:
 
 - `compose.yml` — the whole stack, used as-is in production.
-- `compose.override.yml` — local-dev-only overrides (bind-mounted source for hot reload, published ports, Mailcatcher, a local `minio` service for the multi-zone demo below). Automatically merged on top of `compose.yml` when you don't pass `-f`.
+- `compose.override.yml` — local-dev-only overrides (bind-mounted source for hot reload, published ports, a local `minio` service for the multi-zone demo below; Mailcatcher is also defined here but currently commented out -- see [Mailcatcher](#mailcatcher)). Automatically merged on top of `compose.yml` when you don't pass `-f`.
 - `compose.mock-lan.yml` + `compose.mock-lan-client.yml` — an optional, profile-gated fixture environment for exercising device discovery without real network hardware (see `README.md`'s Quick Start and `compose.mock-lan.yml`'s header comment). Only merged in via `scripts/run.sh client --with-mock-lan` or the standalone `scripts/mock-lan/*.sh` scripts — never loaded by a plain `docker compose` invocation.
 
 ```bash
@@ -265,10 +265,10 @@ DOMAIN=localhost.tiangolo.com
 | Backend | http://localhost:8000 | http://api.localhost.tiangolo.com |
 | Swagger UI | http://localhost:8000/docs | http://api.localhost.tiangolo.com/docs |
 | ReDoc | http://localhost:8000/redoc | http://api.localhost.tiangolo.com/redoc |
-| Adminer | http://localhost:8080 | http://localhost.tiangolo.com:8080 |
 | Traefik UI | http://localhost:8090 | http://localhost.tiangolo.com:8090 |
-| MailCatcher | http://localhost:1080 | http://localhost.tiangolo.com:1080 |
 
 ## Mailcatcher
 
-Mailcatcher is a simple SMTP server that catches all emails sent by the backend during local development instead of sending real ones — useful for testing/debugging email flows without a real SMTP provider. The backend is automatically configured to use it when running via `docker compose` locally (SMTP on port 1025); view captured emails at http://localhost:1080.
+Currently disabled (commented out in `compose.override.yml`, along with the backend's matching `SMTP_HOST`/etc. env vars) -- uncomment both blocks together to bring it back.
+
+Mailcatcher is a simple SMTP server that catches all emails sent by the backend during local development instead of sending real ones — useful for testing/debugging email flows without a real SMTP provider. Once re-enabled, the backend is automatically configured to use it when running via `docker compose` locally (SMTP on port 1025); view captured emails at http://localhost:1080.

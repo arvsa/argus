@@ -54,11 +54,6 @@ services:
     ports:
       - "6379:6379"
 
-  adminer:
-    restart: "no"
-    ports:
-      - "8080:8080"
-
   frontend:
     restart: "no"
 
@@ -88,17 +83,19 @@ services:
     # TODO: remove once coverage is done locally
     volumes:
       - ./backend/htmlcov:/app/backend/htmlcov
-    environment:
-      SMTP_HOST: "mailcatcher"
-      SMTP_PORT: "1025"
-      SMTP_TLS: "false"
-      EMAILS_FROM_EMAIL: "noreply@example.com"
+    # Mailcatcher is disabled below -- these only mattered while it was
+    # running. Uncomment both together to bring email testing back.
+    # environment:
+    #   SMTP_HOST: "mailcatcher"
+    #   SMTP_PORT: "1025"
+    #   SMTP_TLS: "false"
+    #   EMAILS_FROM_EMAIL: "noreply@example.com"
 
-  mailcatcher:
-    image: schickling/mailcatcher
-    ports:
-      - "1080:1080"
-      - "1025:1025"
+  # mailcatcher:
+  #   image: schickling/mailcatcher
+  #   ports:
+  #     - "1080:1080"
+  #     - "1025:1025"
 
   # S3-compatible object storage for local development, so you can run the
   # full argus-client -> argus-server pipeline without real AWS credentials.

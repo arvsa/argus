@@ -50,7 +50,6 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 | **pingsvc** | Concurrent ICMP ping daemon (Go). Its `-role` flag (`pingsvc` / `exporter` / `both`) determines whether it just pings, just exports/pushes snapshots, or both — `both` is what makes a deployment an `argus-client`. |
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
-| **adminer** | Database web UI |
 | **frontend** | React + Vite + TypeScript operator dashboard. Runs in Docker (dev target, hot reload) or locally via `npm` -- see Quick Start below. |
 
 ## Quick Start
@@ -75,7 +74,6 @@ Local URLs once running:
 - Frontend dashboard: http://localhost:5173
 - Backend API: http://localhost:8000
 - API docs (Swagger): http://localhost:8000/docs
-- Adminer (DB UI): http://localhost:8080
 - pingsvc Prometheus metrics: http://localhost:9090/metrics (client mode only)
 
 The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`).
