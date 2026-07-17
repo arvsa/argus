@@ -304,6 +304,19 @@ def approve_discovered_device(
 def reject_discovered_device(
     *, session: Session, discovered: DiscoveredDevice
 ) -> DiscoveredDevice:
+    """Rejecting a candidate that was never approved is a no-op beyond the
+    status flip (nothing was ever promoted). Rejecting one that *was*
+    previously approved must actually stop it from being monitored --
+    otherwise "reject" is a lie: the Device promote_discovered_device
+    created keeps existing regardless, still shows up in live ping status
+    and pingsvc's targets-export. Only remove it when it's still just the
+    bare promotion stub (node_id is None) -- once an operator goes further
+    and places it in the hierarchy, that's a deliberate action a later
+    reject shouldn't silently undo."""
+    existing = get_device_by_addr(session=session, addr=discovered.addr)
+    if existing and existing.node_id is None:
+        session.delete(existing)
+
     discovered.status = "rejected"
     session.add(discovered)
     session.commit()

@@ -184,6 +184,81 @@ def test_reject_discovered_device_does_not_promote(client: TestClient) -> None:
     assert not any(d["addr"] == addr for d in devices)
 
 
+def test_reject_after_approve_removes_the_promoted_device(client: TestClient) -> None:
+    """An operator approving, then changing their mind and rejecting, must
+    actually stop the device from being monitored -- not leave the earlier
+    promotion's Device row (and therefore its live ping status / targets-
+    export entry) in place forever regardless of the later rejection."""
+    addr = "198.51.100.22"
+    ingest = client.post(
+        f"{API}/devices/discovered",
+        headers=_pingsvc_headers(),
+        json={"reports": [_report(addr=addr)]},
+    )
+    disc_id = ingest.json()["data"][0]["id"]
+
+    su_headers = _su(client)
+    client.post(f"{API}/devices/discovered/{disc_id}/approve", headers=su_headers)
+    devices = client.get(f"{API}/devices/", headers=su_headers).json()["data"]
+    assert any(d["addr"] == addr for d in devices), "approve should have promoted it"
+
+    r = client.post(f"{API}/devices/discovered/{disc_id}/reject", headers=su_headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "rejected"
+
+    devices = client.get(f"{API}/devices/", headers=su_headers).json()["data"]
+    assert not any(d["addr"] == addr for d in devices), (
+        "reject after approve should remove the promoted device"
+    )
+
+
+def test_reject_after_approve_keeps_a_device_already_assigned_to_a_node(
+    client: TestClient,
+) -> None:
+    """If an operator went further and placed the promoted device into the
+    hierarchy, a later reject shouldn't silently delete that deliberate
+    placement -- only an unassigned (still just a bare promotion stub)
+    Device is safe to remove automatically."""
+    addr = "198.51.100.23"
+    ingest = client.post(
+        f"{API}/devices/discovered",
+        headers=_pingsvc_headers(),
+        json={"reports": [_report(addr=addr)]},
+    )
+    disc_id = ingest.json()["data"][0]["id"]
+
+    su_headers = _su(client)
+    client.post(f"{API}/devices/discovered/{disc_id}/approve", headers=su_headers)
+    devices = client.get(f"{API}/devices/", headers=su_headers).json()["data"]
+    device_id = next(d["id"] for d in devices if d["addr"] == addr)
+
+    tenant_id = "reject-keep-assigned"
+    root_type = client.post(
+        f"{API}/node-types/",
+        headers=su_headers,
+        json={"tenant_id": tenant_id, "name": "Region", "rank": 0},
+    ).json()
+    node = client.post(
+        f"{API}/nodes/",
+        headers=su_headers,
+        json={"name": "Main Region", "node_type_id": root_type["id"]},
+    ).json()
+    assign = client.patch(
+        f"{API}/devices/{device_id}",
+        headers=su_headers,
+        json={"node_id": node["id"]},
+    )
+    assert assign.status_code == 200, assign.text
+
+    r = client.post(f"{API}/devices/discovered/{disc_id}/reject", headers=su_headers)
+    assert r.status_code == 200, r.text
+
+    devices = client.get(f"{API}/devices/", headers=su_headers).json()["data"]
+    matches = [d for d in devices if d["addr"] == addr]
+    assert len(matches) == 1, "an assigned device must not be deleted on reject"
+    assert matches[0]["node_id"] == node["id"]
+
+
 def test_get_discovered_devices_requires_superuser(
     client: TestClient, normal_user_token_headers: dict[str, str]
 ) -> None:
