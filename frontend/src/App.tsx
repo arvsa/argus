@@ -15,6 +15,8 @@ import { DevicesPage } from "@/pages/Devices";
 import { ZonesPage } from "@/pages/Zones";
 import { ZoneDetailPage } from "@/pages/ZoneDetail";
 import { UsersPage } from "@/pages/admin/Users";
+import { DiscoveredDevicesPage } from "@/pages/admin/DiscoveredDevices";
+import { InfraTargetsPage } from "@/pages/admin/InfraTargets";
 import { Toaster } from "@/components/Toaster";
 
 const queryClient = new QueryClient();
@@ -38,6 +40,22 @@ export default function App() {
               <Route element={<RequireSuperuser />}>
                 <Route path="/hierarchy/types" element={<NodeTypesPage />} />
                 <Route path="/admin/users" element={<UsersPage />} />
+                <Route
+                  path="/admin/discovered-devices"
+                  element={
+                    <ClientOnlyRoute>
+                      <DiscoveredDevicesPage />
+                    </ClientOnlyRoute>
+                  }
+                />
+                <Route
+                  path="/admin/infra-targets"
+                  element={
+                    <ClientOnlyRoute>
+                      <InfraTargetsPage />
+                    </ClientOnlyRoute>
+                  }
+                />
               </Route>
               <Route
                 path="/devices"

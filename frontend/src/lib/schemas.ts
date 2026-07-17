@@ -71,6 +71,21 @@ export const deviceAssignmentSchema = z.object({
   hostname: z.string().optional(),
 });
 
+export const infraTargetCreateSchema = z.object({
+  addr: z.string().min(1, "Address is required"),
+  kind: z.enum(["router", "switch"]),
+  community: z.string().min(1, "Community string is required"),
+});
+
+// community is only present when the operator wants to change it -- same
+// write-only convention as the create form, but optional here.
+export const infraTargetUpdateSchema = z.object({
+  addr: z.string().min(1, "Address is required"),
+  kind: z.enum(["router", "switch"]),
+  enabled: z.boolean(),
+  community: z.string().optional(),
+});
+
 // Node creation additionally needs the NodeType to create it as -- see
 // NodeTree.tsx's NodeCreateForm, which only renders the field when there's
 // more than one candidate type for the position (root vs. child of a
@@ -112,6 +127,8 @@ export type AppendNodeTypeInput = z.infer<typeof appendNodeTypeSchema>;
 export type RenameNodeTypeInput = z.infer<typeof renameNodeTypeSchema>;
 export type NodeNameInput = z.infer<typeof nodeNameSchema>;
 export type DeviceAssignmentInput = z.infer<typeof deviceAssignmentSchema>;
+export type InfraTargetCreateInput = z.infer<typeof infraTargetCreateSchema>;
+export type InfraTargetUpdateInput = z.infer<typeof infraTargetUpdateSchema>;
 export type NodeCreateInput = z.infer<typeof nodeCreateSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type EditUserInput = z.infer<typeof editUserSchema>;
