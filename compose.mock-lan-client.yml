@@ -1,0 +1,17 @@
+# Fragment, not a standalone-usable file: adds pingsvc's `mock-lan` network
+# attachment on top of compose.yml's own pingsvc definition (image/build/
+# env/etc.), used only by `scripts/run.sh client --with-mock-lan` alongside
+# compose.yml + compose.mock-lan.yml.
+#
+# Kept out of compose.mock-lan.yml itself because that file is also used
+# completely standalone (scripts/mock-lan/*.sh) with no compose.yml in the
+# picture -- a pingsvc entry with no image/build there would fail Compose's
+# "service has neither an image nor a build context" validation the moment
+# it's selected by any active profile. Compose unions a service's networks:
+# list across merged files rather than replacing it, so this just adds
+# `mock-lan` to pingsvc's existing [traefik-public, default] without
+# repeating anything compose.yml already declares.
+services:
+  pingsvc:
+    networks:
+      - mock-lan

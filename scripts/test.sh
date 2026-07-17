@@ -26,6 +26,16 @@ export COMPOSE_PROJECT_NAME=argus-test
 # alongside a live dev stack with zero port conflicts.
 COMPOSE="docker compose -f compose.yml --profile client"
 
+# compose.yml's traefik-public network is external: true (see the comment
+# above -- compose.override.yml is deliberately skipped, so nothing here
+# flips that to a self-managed network the way scripts/run.sh's stack
+# does). Compose refuses to attach to a network that doesn't exist yet, so
+# a clean checkout with no prior `docker compose` run needs this created
+# once, plain bridge driver (matches what compose.override.yml would have
+# produced) -- self-healing, not owning its full lifecycle, same posture
+# as scripts/swarm/dev-setup.sh tolerating a pre-existing one instead.
+docker network inspect traefik-public >/dev/null 2>&1 || docker network create traefik-public
+
 $COMPOSE build backend
 $COMPOSE down -v --remove-orphans # Remove possibly previous broken stacks left hanging after an error
 $COMPOSE up -d db prestart backend redis

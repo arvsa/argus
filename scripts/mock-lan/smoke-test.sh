@@ -12,7 +12,10 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
-COMPOSE="docker compose -f compose.mock-lan.yml"
+# See up.sh's comment -- compose.mock-lan.yml no longer pins its own
+# project name, so this script states its standalone identity explicitly.
+export COMPOSE_PROJECT_NAME=argus-mock-lan
+COMPOSE="docker compose -f compose.mock-lan.yml --profile mock-lan"
 EXEC="$COMPOSE exec -T netshoot"
 
 fail=0

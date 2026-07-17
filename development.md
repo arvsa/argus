@@ -10,6 +10,7 @@ The stack is defined across two files, both used automatically by plain `docker 
 
 - `compose.yml` — the whole stack, used as-is in production.
 - `compose.override.yml` — local-dev-only overrides (bind-mounted source for hot reload, published ports, Mailcatcher, a local `minio` service for the multi-zone demo below). Automatically merged on top of `compose.yml` when you don't pass `-f`.
+- `compose.mock-lan.yml` + `compose.mock-lan-client.yml` — an optional, profile-gated fixture environment for exercising device discovery without real network hardware (see `README.md`'s Quick Start and `compose.mock-lan.yml`'s header comment). Only merged in via `scripts/run.sh client --with-mock-lan` or the standalone `scripts/mock-lan/*.sh` scripts — never loaded by a plain `docker compose` invocation.
 
 ```bash
 docker compose watch backend   # start the stack, hot-reload + stream logs for backend
