@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getState } from "@/api/devices";
+import { getDeviceAssignments } from "@/api/deviceAssignments";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PageHeader } from "@/components/PageHeader";
 import { PageSpinner } from "@/components/Spinner";
@@ -18,6 +19,18 @@ export function DevicesPage() {
     queryKey: ["state", page],
     queryFn: () => getState({ page, size: PAGE_SIZE }),
   });
+
+  // Devices.tsx only ever knows live Redis-backed status keyed by address
+  // (CLAUDE.md's documented ephemeral-state-vs-persisted-assignment split),
+  // so a device's name is joined client-side from the persisted Device
+  // list rather than riding along on every ping event.
+  const { data: assignments } = useQuery({
+    queryKey: ["device-assignments-all"],
+    queryFn: () => getDeviceAssignments({}),
+  });
+  const hostnameByAddr = new Map(
+    (assignments?.data ?? []).filter((d) => d.hostname).map((d) => [d.addr, d.hostname as string])
+  );
 
   const totalPages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
@@ -44,14 +57,28 @@ export function DevicesPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {data.items.map((item) => (
-                    <tr key={item.addr}>
-                      <td className="px-4 py-2.5 font-mono text-gray-800">{item.addr}</td>
-                      <td className="px-4 py-2.5"><StatusBadge up={item.ok} /></td>
-                      <td className="px-4 py-2.5 text-gray-500">{formatTs(item.ts)}</td>
-                      <td className="px-4 py-2.5 text-gray-500">{item.interval_ms}ms</td>
-                    </tr>
-                  ))}
+                  {data.items.map((item) => {
+                    const hostname = hostnameByAddr.get(item.addr);
+                    return (
+                      <tr key={item.addr}>
+                        <td className="px-4 py-2.5 text-gray-800">
+                          {hostname ? (
+                            <>
+                              <span className="block">{hostname}</span>
+                              <span className="block font-mono text-xs text-gray-400">
+                                {item.addr}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="font-mono">{item.addr}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5"><StatusBadge up={item.ok} /></td>
+                        <td className="px-4 py-2.5 text-gray-500">{formatTs(item.ts)}</td>
+                        <td className="px-4 py-2.5 text-gray-500">{item.interval_ms}ms</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

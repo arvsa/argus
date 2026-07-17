@@ -62,6 +62,10 @@ describe("AppShell role-aware navigation", () => {
     expect(screen.getByText("Hierarchy")).toBeInTheDocument();
     expect(screen.getByText("Live")).toBeInTheDocument();
     expect(screen.getByTestId("live-feed-provider")).toBeInTheDocument();
+    // Discovery only ever runs where pingsvc runs (client/zone-local) --
+    // same reasoning as Devices/Live above.
+    expect(screen.getByText("Discovered Devices")).toBeInTheDocument();
+    expect(screen.getByText("Infrastructure Targets")).toBeInTheDocument();
   });
 
   it("never mounts the live feed before the role probe settles or on a server", async () => {
@@ -92,7 +96,10 @@ describe("AppShell role-aware navigation", () => {
     expect(screen.queryByText("Dashboard")).not.toBeInTheDocument();
     expect(screen.queryByText("Devices")).not.toBeInTheDocument();
     expect(screen.queryByText("Live")).not.toBeInTheDocument();
-    // Admin nav is role-independent.
+    // Base admin nav is role-independent...
     expect(screen.getByText("Users")).toBeInTheDocument();
+    // ...but discovery admin pages are client-only, same as Devices/Live.
+    expect(screen.queryByText("Discovered Devices")).not.toBeInTheDocument();
+    expect(screen.queryByText("Infrastructure Targets")).not.toBeInTheDocument();
   });
 });

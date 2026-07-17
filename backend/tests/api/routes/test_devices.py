@@ -179,6 +179,20 @@ def test_update_device(client: TestClient) -> None:
     assert r.json()["addr"] == new_addr
 
 
+def test_update_device_can_set_mac(client: TestClient) -> None:
+    headers = _su(client)
+    created = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": "192.0.2.63"}
+    ).json()
+    r = client.patch(
+        f"{API}/devices/{created['id']}",
+        headers=headers,
+        json={"mac": "AA:BB:CC:DD:EE:04"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["mac"] == "AA:BB:CC:DD:EE:04"
+
+
 def test_update_device_requires_superuser(
     client: TestClient, normal_user_token_headers: dict[str, str]
 ) -> None:
@@ -345,6 +359,98 @@ def test_targets_export_succeeds_regardless_of_device_count(client: TestClient) 
     assert r.status_code == 200, r.text
 
 
+def test_targets_export_device_without_mac_is_byte_identical_to_today(
+    client: TestClient,
+) -> None:
+    """Regression sentinel (plan/device-discovery-v1.md §3 step 1): a
+    device with no mac on file must still produce the plain
+    "addr,ancestor1;ancestor2;..." line -- no third field, no trailing
+    comma -- exactly what pingsvc's parseTargetLine has always accepted."""
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    root = _root_node(client, headers, root_type["id"])
+
+    client.post(
+        f"{API}/devices/",
+        headers=headers,
+        json={"addr": "203.0.113.30", "node_id": root["id"]},
+    )
+
+    r = client.get(f"{API}/devices/targets-export", headers=headers)
+    lines = r.text.strip("\n").split("\n")
+    assert f"203.0.113.30,{root['id']}" in lines
+
+
+def test_targets_export_includes_mac_as_third_field_for_assigned_device(
+    client: TestClient,
+) -> None:
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    root = _root_node(client, headers, root_type["id"])
+
+    created = client.post(
+        f"{API}/devices/",
+        headers=headers,
+        json={"addr": "203.0.113.31", "node_id": root["id"]},
+    ).json()
+    client.patch(
+        f"{API}/devices/{created['id']}",
+        headers=headers,
+        json={"mac": "AA:BB:CC:DD:EE:01"},
+    )
+
+    r = client.get(f"{API}/devices/targets-export", headers=headers)
+    lines = r.text.strip("\n").split("\n")
+    assert f"203.0.113.31,{root['id']},AA:BB:CC:DD:EE:01" in lines
+
+
+def test_targets_export_unassigned_device_with_mac_uses_empty_middle_field(
+    client: TestClient,
+) -> None:
+    """An unassigned device (no node) that has a known mac must emit
+    "addr,,mac" -- empty middle field -- not "addr,mac", which would be
+    indistinguishable from the existing 2-field "assigned, no mac" format
+    and get misparsed as a bogus single-entry NodeIDs chain."""
+    headers = _su(client)
+    created = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": "203.0.113.32"}
+    ).json()
+    client.patch(
+        f"{API}/devices/{created['id']}",
+        headers=headers,
+        json={"mac": "AA:BB:CC:DD:EE:02"},
+    )
+
+    r = client.get(f"{API}/devices/targets-export", headers=headers)
+    lines = r.text.strip("\n").split("\n")
+    assert "203.0.113.32,,AA:BB:CC:DD:EE:02" in lines
+
+
+def test_targets_hash_matches_sha256_of_export_body_with_mac_field(
+    client: TestClient,
+) -> None:
+    su_headers = _su(client)
+    addr = "203.0.113.33"
+    created = client.post(
+        f"{API}/devices/", headers=su_headers, json={"addr": addr}
+    ).json()
+    client.patch(
+        f"{API}/devices/{created['id']}",
+        headers=su_headers,
+        json={"mac": "AA:BB:CC:DD:EE:03"},
+    )
+
+    export = client.get(f"{API}/devices/targets-export", headers=su_headers)
+    assert export.status_code == 200, export.text
+    expected = hashlib.sha256(export.text.encode()).hexdigest()
+
+    r = client.get(f"{API}/devices/targets-hash", headers=_pingsvc_headers())
+    assert r.status_code == 200, r.text
+    assert r.json()["hash"] == expected
+
+
 # ── pingsvc target sync (targets-hash / targets-export-internal) ──────────
 # See plan for "Live Target Sync (pingsvc hot-reload)": pingsvc has no user
 # account, so these routes are gated by a separate shared-secret token
@@ -419,6 +525,138 @@ def test_targets_export_internal_rejects_a_superuser_jwt(client: TestClient) -> 
     headers = _su(client)
     r = client.get(f"{API}/devices/targets-export-internal", headers=headers)
     assert r.status_code == 401
+
+
+# ── Bulk import (plan/device-naming-and-bulk-import-v1.md §2.6) ─────────
+# CSV parsing happens client-side; this endpoint takes pre-parsed JSON
+# rows and applies the exact same per-row duplicate/orphan-reassignment
+# logic as POST /devices/, reporting a per-row outcome instead of
+# all-or-nothing.
+
+
+def test_bulk_import_creates_new_devices(client: TestClient) -> None:
+    headers = _su(client)
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={
+            "rows": [
+                {"addr": "203.0.113.50", "hostname": "floor-1-switch"},
+                {"addr": "203.0.113.51", "hostname": "floor-2-switch"},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 2
+    assert all(res["outcome"] == "created" for res in results)
+    assert results[0]["device"]["hostname"] == "floor-1-switch"
+    assert results[1]["device"]["hostname"] == "floor-2-switch"
+
+
+def test_bulk_import_skips_unassigned_duplicate_addr(client: TestClient) -> None:
+    headers = _su(client)
+    addr = "203.0.113.52"
+    client.post(f"{API}/devices/", headers=headers, json={"addr": addr})
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "skipped_duplicate"
+
+
+def test_bulk_import_skips_already_assigned_elsewhere_addr(client: TestClient) -> None:
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "203.0.113.53"
+    client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    )
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr, "node_id": node_b["id"]}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "skipped_duplicate"
+
+
+def test_bulk_import_reassigns_orphaned_addr_when_node_given(client: TestClient) -> None:
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+    node_a = _root_node(client, headers, root_type["id"])
+    node_b = client.post(
+        f"{API}/nodes/",
+        headers=headers,
+        json={"name": "Other Region", "node_type_id": root_type["id"]},
+    ).json()
+
+    addr = "203.0.113.54"
+    device = client.post(
+        f"{API}/devices/", headers=headers, json={"addr": addr, "node_id": node_a["id"]}
+    ).json()
+    client.delete(f"{API}/nodes/{node_a['id']}", headers=headers)
+
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={"rows": [{"addr": addr, "node_id": node_b["id"]}]},
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert results[0]["outcome"] == "reassigned"
+    assert results[0]["device"]["id"] == device["id"]
+    assert results[0]["device"]["node_id"] == node_b["id"]
+
+
+def test_bulk_import_reports_malformed_row_without_blocking_others(
+    client: TestClient,
+) -> None:
+    headers = _su(client)
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=headers,
+        json={
+            "rows": [
+                {"addr": "203.0.113.55"},
+                {"hostname": "no-addr-here"},
+                {"addr": "203.0.113.56"},
+            ]
+        },
+    )
+    assert r.status_code == 200, r.text
+    results = r.json()["results"]
+    assert len(results) == 3
+    assert results[0]["outcome"] == "created"
+    assert results[1]["outcome"] == "error"
+    assert results[1]["error"]
+    assert results[2]["outcome"] == "created"
+
+
+def test_bulk_import_requires_superuser(
+    client: TestClient, normal_user_token_headers: dict[str, str]
+) -> None:
+    r = client.post(
+        f"{API}/devices/bulk-import",
+        headers=normal_user_token_headers,
+        json={"rows": [{"addr": "203.0.113.57"}]},
+    )
+    assert r.status_code == 403
 
 
 def test_targets_export_internal_matches_human_facing_export(

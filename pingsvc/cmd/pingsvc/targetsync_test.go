@@ -109,6 +109,52 @@ func TestTargetStore_SetReplacesTargetsAtomically(t *testing.T) {
 	}
 }
 
+func TestTargetStore_DeviceKeyFor_FallsBackToAddrWhenNoDeviceKeyOnFile(t *testing.T) {
+	store := newTargetStore([]Target{{Addr: "10.0.0.1"}})
+
+	if got := store.DeviceKeyFor("10.0.0.1"); got != "10.0.0.1" {
+		t.Errorf("DeviceKeyFor(10.0.0.1) = %q, want %q (fallback to addr)", got, "10.0.0.1")
+	}
+}
+
+func TestTargetStore_DeviceKeyFor_ReturnsConfiguredDeviceKey(t *testing.T) {
+	store := newTargetStore([]Target{{Addr: "10.0.0.1", DeviceKey: "AA:BB:CC:DD:EE:FF"}})
+
+	if got := store.DeviceKeyFor("10.0.0.1"); got != "AA:BB:CC:DD:EE:FF" {
+		t.Errorf("DeviceKeyFor(10.0.0.1) = %q, want %q", got, "AA:BB:CC:DD:EE:FF")
+	}
+}
+
+func TestTargetStore_DeviceKeyFor_UnknownAddrFallsBackToItself(t *testing.T) {
+	store := newTargetStore([]Target{{Addr: "10.0.0.1", DeviceKey: "AA:BB:CC:DD:EE:FF"}})
+
+	if got := store.DeviceKeyFor("10.0.0.9"); got != "10.0.0.9" {
+		t.Errorf("DeviceKeyFor(10.0.0.9) = %q, want %q (unknown addr falls back to itself)", got, "10.0.0.9")
+	}
+}
+
+func TestTargetStore_LiveDeviceKeys_DefaultsToAddrAndDedupes(t *testing.T) {
+	store := newTargetStore([]Target{
+		{Addr: "10.0.0.1", DeviceKey: "AA:BB:CC:DD:EE:FF"},
+		{Addr: "10.0.0.2"},
+		{Addr: "10.0.0.3", DeviceKey: "AA:BB:CC:DD:EE:FF"}, // same key as 10.0.0.1
+	})
+
+	got := store.LiveDeviceKeys()
+	want := map[string]struct{}{
+		"AA:BB:CC:DD:EE:FF": {},
+		"10.0.0.2":          {},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("LiveDeviceKeys() = %v, want %v", got, want)
+	}
+	for k := range want {
+		if _, ok := got[k]; !ok {
+			t.Errorf("LiveDeviceKeys() missing %q", k)
+		}
+	}
+}
+
 // ── syncTargetsCycle ────────────────────────────────────────────────────
 
 func TestSyncTargetsCycle_FetchesAndAppliesOnHashChange(t *testing.T) {

@@ -2,13 +2,16 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Upload } from "lucide-react";
 import {
   getDeviceAssignments,
   createDeviceAssignment,
   deleteDeviceAssignment,
+  bulkImportDeviceAssignments,
+  type BulkImportResponse,
 } from "@/api/deviceAssignments";
 import { deviceAssignmentSchema, type DeviceAssignmentInput } from "@/lib/schemas";
+import { parseDeviceCsv, type ParsedCsvRow, type CsvParseError } from "@/lib/csv";
 import { Spinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { SlideOver } from "@/components/SlideOver";
@@ -21,6 +24,7 @@ import { useApiErrorToast } from "@/hooks/useErrorToast";
 // record (see plan/device-node-assignment-bridge-v1.md).
 export function AssignedDevices({ nodeId }: { nodeId: string }) {
   const [addOpen, setAddOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const queryClient = useQueryClient();
   const errorToast = useApiErrorToast();
   const queryKey = ["device-assignments", nodeId];
@@ -32,7 +36,11 @@ export function AssignedDevices({ nodeId }: { nodeId: string }) {
 
   const createMutation = useMutation({
     mutationFn: (d: DeviceAssignmentInput) =>
-      createDeviceAssignment({ addr: d.addr, node_id: nodeId }),
+      createDeviceAssignment({
+        addr: d.addr,
+        node_id: nodeId,
+        ...(d.hostname ? { hostname: d.hostname } : {}),
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey });
       setAddOpen(false);
@@ -46,16 +54,34 @@ export function AssignedDevices({ nodeId }: { nodeId: string }) {
     onError: errorToast("Couldn't remove device"),
   });
 
+  const bulkImportMutation = useMutation({
+    mutationFn: (rows: ParsedCsvRow[]) =>
+      bulkImportDeviceAssignments(rows.map((r) => ({ ...r, node_id: nodeId }))),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onError: errorToast("Couldn't bulk-import devices"),
+  });
+
   return (
     <div className="space-y-2 border-t border-gray-100 pt-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-gray-900">Assigned devices</h3>
-        <button
-          onClick={() => setAddOpen(true)}
-          className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
-        >
-          <Plus className="h-3.5 w-3.5" /> Add
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              bulkImportMutation.reset();
+              setBulkOpen(true);
+            }}
+            className="flex items-center gap-1 rounded-lg border border-gray-300 px-2.5 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Upload className="h-3.5 w-3.5" /> Bulk import
+          </button>
+          <button
+            onClick={() => setAddOpen(true)}
+            className="flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-blue-700"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add
+          </button>
+        </div>
       </div>
 
       {isLoading && (
@@ -75,7 +101,20 @@ export function AssignedDevices({ nodeId }: { nodeId: string }) {
                 key={device.id}
                 className="flex items-center justify-between gap-2 rounded-lg border border-gray-100 px-3 py-1.5 text-sm"
               >
-                <span className="truncate font-mono text-gray-700">{device.addr}</span>
+                <span className="min-w-0 truncate">
+                  {device.hostname ? (
+                    <>
+                      <span className="block truncate font-medium text-gray-900">
+                        {device.hostname}
+                      </span>
+                      <span className="block truncate font-mono text-xs text-gray-400">
+                        {device.addr}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="truncate font-mono text-gray-700">{device.addr}</span>
+                  )}
+                </span>
                 <ConfirmDialog
                   trigger={
                     <button
@@ -100,6 +139,14 @@ export function AssignedDevices({ nodeId }: { nodeId: string }) {
         <AddDeviceForm
           onSubmit={(d) => createMutation.mutate(d)}
           isSubmitting={createMutation.isPending}
+        />
+      </SlideOver>
+
+      <SlideOver open={bulkOpen} onOpenChange={setBulkOpen} title="Bulk import devices">
+        <BulkImportForm
+          onSubmit={(rows) => bulkImportMutation.mutate(rows)}
+          isSubmitting={bulkImportMutation.isPending}
+          result={bulkImportMutation.data}
         />
       </SlideOver>
     </div>
@@ -130,6 +177,17 @@ function AddDeviceForm({
         />
         {errors.addr && <p className="text-xs text-red-600">{errors.addr.message}</p>}
       </div>
+      <div className="space-y-1">
+        <label htmlFor="device-hostname" className="text-sm font-medium text-gray-700">
+          Name <span className="font-normal text-gray-400">(optional)</span>
+        </label>
+        <input
+          id="device-hostname"
+          placeholder="floor-1-switch"
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          {...register("hostname")}
+        />
+      </div>
       <button
         type="submit"
         disabled={isSubmitting}
@@ -138,6 +196,90 @@ function AddDeviceForm({
         {isSubmitting && <Spinner className="h-4 w-4 border-white border-t-blue-300" />}
         Add device
       </button>
+    </form>
+  );
+}
+
+const OUTCOME_LABELS: Record<string, string> = {
+  created: "created",
+  reassigned: "reassigned",
+  skipped_duplicate: "skipped (already exists)",
+  error: "error",
+};
+
+function BulkImportForm({
+  onSubmit,
+  isSubmitting,
+  result,
+}: {
+  onSubmit: (rows: ParsedCsvRow[]) => void;
+  isSubmitting: boolean;
+  result: BulkImportResponse | undefined;
+}) {
+  const [text, setText] = useState("");
+  const [parseErrors, setParseErrors] = useState<CsvParseError[]>([]);
+
+  function handleSubmit(e: { preventDefault: () => void }) {
+    e.preventDefault();
+    const { rows, errors } = parseDeviceCsv(text);
+    setParseErrors(errors);
+    // Malformed lines are reported (below) but never block the valid rows
+    // from being submitted -- same "one bad row shouldn't block the rest"
+    // principle as the backend's per-row outcome reporting. Only bail out
+    // here when there's nothing valid left to send at all.
+    if (rows.length === 0) {
+      return;
+    }
+    onSubmit(rows);
+  }
+
+  const counts = result?.results.reduce<Record<string, number>>((acc, r) => {
+    acc[r.outcome] = (acc[r.outcome] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div className="space-y-1">
+        <label htmlFor="bulk-import-csv" className="text-sm font-medium text-gray-700">
+          Paste CSV
+        </label>
+        <textarea
+          id="bulk-import-csv"
+          rows={8}
+          placeholder={"addr,hostname\n10.0.1.1,floor-1-switch"}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-xs outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <p className="text-xs text-gray-400">
+          Header row required, at minimum an "addr" column. "hostname", "mac", "timezone" are
+          optional.
+        </p>
+        {parseErrors.map((err) => (
+          <p key={err.line} className="text-xs text-red-600">
+            Line {err.line}: {err.message}
+          </p>
+        ))}
+      </div>
+      <button
+        type="submit"
+        disabled={isSubmitting}
+        className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+      >
+        {isSubmitting && <Spinner className="h-4 w-4 border-white border-t-blue-300" />}
+        Import
+      </button>
+
+      {counts && (
+        <div className="space-y-1 rounded-lg border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600">
+          {Object.entries(counts).map(([outcome, count]) => (
+            <p key={outcome} className={outcome === "error" ? "text-red-600" : undefined}>
+              {count} {OUTCOME_LABELS[outcome] ?? outcome}
+            </p>
+          ))}
+        </div>
+      )}
     </form>
   );
 }

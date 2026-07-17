@@ -1,0 +1,61 @@
+# Standalone dev/test-only mock local-network environment for pingsvc's
+# device-discovery mechanism (plan/device-discovery-v1.md §2.9) -- NOT part
+# of any production topology, not wired into scripts/swarm/*.
+#
+# Plain Docker Compose rather than a Swarm stack, deliberately: Swarm's
+# overlay network is a VXLAN tunnel abstraction, while Compose's default
+# bridge driver is a real Linux bridge (veth pairs) -- what a future
+# arpsweep.go needs to observe genuine ARP resolution between containers.
+#
+# Two independent things get mocked here:
+#   - snmpsim serves canned SNMP OID responses (protocol-response mock, no
+#     real L2 needed at all -- see mock-lan/snmpsim/).
+#   - device1/device2/device3 are cheap ICMP-only targets on a real bridge
+#     network, for testing an active ARP sweep against a genuine (if
+#     virtual) neighbor table.
+#
+# Usage: scripts/mock-lan/up.sh / smoke-test.sh / down.sh.
+
+name: argus-mock-lan
+
+networks:
+  mock-lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  device1:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.11
+
+  device2:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.12
+
+  device3:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.13
+
+  snmpsim:
+    build: ./mock-lan/snmpsim
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.21
+
+  netshoot:
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "infinity"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.31
