@@ -4,6 +4,8 @@
 set -e
 set -x
 
+cd "$(dirname "$0")/.."
+
 # Isolated project name -- Compose's default project name is just the
 # current directory's basename, so without this, a bare `docker compose
 # down -v` here would tear down (and wipe the volumes of) a developer's

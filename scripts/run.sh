@@ -22,6 +22,8 @@
 
 set -e
 
+cd "$(dirname "$0")/.."
+
 usage() {
   echo "Usage: $0 <client|server> [--with-mock-lan]" >&2
   exit 1
