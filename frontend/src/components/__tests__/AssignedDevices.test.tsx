@@ -146,7 +146,7 @@ describe("AssignedDevices", () => {
     expect(screen.getByText(/1 skipped/i)).toBeInTheDocument();
   });
 
-  it("shows a client-side parse error without calling the API", async () => {
+  it("shows a client-side parse error without calling the API when no rows are valid", async () => {
     vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({ data: [], count: 0 });
     const user = userEvent.setup();
     renderComponent("node-1");
@@ -158,6 +158,29 @@ describe("AssignedDevices", () => {
 
     expect(await screen.findByText(/missing required "addr" column/i)).toBeInTheDocument();
     expect(deviceAssignmentsApi.bulkImportDeviceAssignments).not.toHaveBeenCalled();
+  });
+
+  it("imports the valid rows and reports the malformed one, instead of blocking the whole batch", async () => {
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({ data: [], count: 0 });
+    vi.mocked(deviceAssignmentsApi.bulkImportDeviceAssignments).mockResolvedValue({
+      results: [{ row: 0, addr: "10.0.1.10", outcome: "created", error: null, device: device() }],
+    });
+    const user = userEvent.setup();
+    renderComponent("node-1");
+
+    await screen.findByText(/no devices assigned to this node yet/i);
+    await user.click(screen.getByRole("button", { name: /bulk import/i }));
+    await user.type(
+      screen.getByLabelText(/paste csv/i),
+      "addr,hostname{Enter}10.0.1.10,a{Enter},no-addr-here"
+    );
+    await user.click(screen.getByRole("button", { name: /^import$/i }));
+
+    expect(deviceAssignmentsApi.bulkImportDeviceAssignments).toHaveBeenCalledWith([
+      { addr: "10.0.1.10", hostname: "a", node_id: "node-1" },
+    ]);
+    expect(await screen.findByText(/1 created/i)).toBeInTheDocument();
+    expect(screen.getByText(/missing address/i)).toBeInTheDocument();
   });
 
   it("removes a device after confirming", async () => {

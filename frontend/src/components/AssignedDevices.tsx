@@ -11,7 +11,7 @@ import {
   type BulkImportResponse,
 } from "@/api/deviceAssignments";
 import { deviceAssignmentSchema, type DeviceAssignmentInput } from "@/lib/schemas";
-import { parseDeviceCsv, type ParsedCsvRow } from "@/lib/csv";
+import { parseDeviceCsv, type ParsedCsvRow, type CsvParseError } from "@/lib/csv";
 import { Spinner } from "@/components/Spinner";
 import { ErrorState } from "@/components/ErrorState";
 import { SlideOver } from "@/components/SlideOver";
@@ -217,16 +217,19 @@ function BulkImportForm({
   result: BulkImportResponse | undefined;
 }) {
   const [text, setText] = useState("");
-  const [parseError, setParseError] = useState<string | null>(null);
+  const [parseErrors, setParseErrors] = useState<CsvParseError[]>([]);
 
   function handleSubmit(e: { preventDefault: () => void }) {
     e.preventDefault();
     const { rows, errors } = parseDeviceCsv(text);
-    if (errors.length > 0) {
-      setParseError(errors[0].message);
+    setParseErrors(errors);
+    // Malformed lines are reported (below) but never block the valid rows
+    // from being submitted -- same "one bad row shouldn't block the rest"
+    // principle as the backend's per-row outcome reporting. Only bail out
+    // here when there's nothing valid left to send at all.
+    if (rows.length === 0) {
       return;
     }
-    setParseError(null);
     onSubmit(rows);
   }
 
@@ -253,7 +256,11 @@ function BulkImportForm({
           Header row required, at minimum an "addr" column. "hostname", "mac", "timezone" are
           optional.
         </p>
-        {parseError && <p className="text-xs text-red-600">{parseError}</p>}
+        {parseErrors.map((err) => (
+          <p key={err.line} className="text-xs text-red-600">
+            Line {err.line}: {err.message}
+          </p>
+        ))}
       </div>
       <button
         type="submit"
