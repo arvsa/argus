@@ -98,7 +98,12 @@ def build_targets_export(session: Session) -> str:
     # round-trip per distinct node on every single poll.
     node_ids = {device.node_id for device in devices if device.node_id is not None}
     nodes_by_id = (
-        {node.id: node for node in session.exec(select(Node).where(Node.id.in_(node_ids))).all()}
+        {
+            node.id: node
+            for node in session.exec(
+                select(Node).where(Node.id.in_(node_ids))  # type: ignore[attr-defined]
+            ).all()
+        }
         if node_ids
         else {}
     )
