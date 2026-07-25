@@ -107,5 +107,10 @@ if [ "$WITH_MOCK_LAN" -eq 1 ]; then
 Mock-LAN devices are on pingsvc's own network now -- add an Infrastructure
 Target at address "snmpsim" (community "public") to see discovery find
 device1/2/3 (172.28.0.11/.12/.13).
+
+Discovery only runs if pingsvc's backend connection is configured
+(ARGUS_BACKEND_URL/ARGUS_PINGSVC_SYNC_TOKEN in .env) -- see
+development.md#exercising-device-discovery-with-the-mock-lan-fixture for
+the full walkthrough.
 EOF
 fi

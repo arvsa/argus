@@ -86,7 +86,7 @@ To exercise device discovery (SNMP infra polling, plan/device-discovery-v1.md) w
 ./scripts/run.sh client --with-mock-lan
 ```
 
-This joins a small fixture environment (three ICMP-only "devices" plus an `snmpsim` mock router) onto pingsvc's own network as part of the same stack — no extra setup. Add an Infrastructure Target at address `snmpsim` (community `public`) via the dashboard's Infrastructure Targets admin page, and within a discovery cycle (~60s) the three fixture devices show up on the Discovered Devices page. Standalone usage (without the rest of the app stack) is still available via `scripts/mock-lan/{up,down,smoke-test}.sh` — see `compose.mock-lan.yml`'s header comment.
+This joins a small fixture environment (three ICMP-only "devices" plus an `snmpsim` mock router) onto pingsvc's own network as part of the same stack — no extra setup for the fixture itself. Discovery does need pingsvc's backend connection turned on first though (`ARGUS_BACKEND_URL`/`PINGSVC_SYNC_TOKEN` in `.env` — off by default, same as target hot-reload); see the full walkthrough in **[development.md](development.md#exercising-device-discovery-with-the-mock-lan-fixture)** for that one-time step, adding the Infrastructure Target, and reviewing what discovery finds on the Discovered Devices page. Standalone usage (without the rest of the app stack) is still available via `scripts/mock-lan/{up,down,smoke-test}.sh` — see `compose.mock-lan.yml`'s header comment.
 
 Prefer to skip `scripts/run.sh` and run the underlying `docker compose` commands yourself? See **[development.md's Docker Compose basics](development.md#docker-compose-basics)**.
 

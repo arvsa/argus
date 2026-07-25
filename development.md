@@ -248,6 +248,76 @@ docker compose down -v --remove-orphans   # tears down db/redis/minio/backend/pi
 
 Both compose files read `.env` for values injected as environment variables into containers — after changing it, restart the affected service(s). `.env` holds your local secrets/passwords and is already `.gitignore`d; inject each variable through your CI/CD system's secrets instead for staging/production.
 
+## Exercising device discovery with the mock-LAN fixture
+
+Device discovery ([plan/device-discovery-v1.md](plan/device-discovery-v1.md)) has pingsvc SNMP-poll a router/switch's ARP table to find devices it isn't already monitoring. That needs something to actually poll and a real ARP-resolved neighbor table to read back — impractical to fake against real hardware from a laptop. `compose.mock-lan.yml` + `compose.mock-lan-client.yml` (see that file's header comment) provide a fixture for exactly this: three ICMP-only "device" containers plus an `snmpsim` container serving canned SNMP responses, all on a fixed-subnet Docker bridge network — a real Linux bridge, so ARP resolution genuinely happens (unlike Swarm's overlay driver, which is why this is Compose-only and not wired into `scripts/swarm/*`).
+
+### 0. One-time setup: turn on pingsvc's backend connection
+
+Discovery reuses the same backend connection as [target hot-reload](#running-pingsvc-locally) and is gated purely on `ARGUS_BACKEND_URL` being set — not a separate flag — otherwise it's a permanent no-op. In `.env`, uncomment (or add):
+
+```dotenv
+PINGSVC_SYNC_TOKEN=changethis
+ARGUS_PINGSVC_SYNC_TOKEN=changethis
+ARGUS_BACKEND_URL=http://backend:8000
+```
+
+`PINGSVC_SYNC_TOKEN` (read by the backend) and `ARGUS_PINGSVC_SYNC_TOKEN` (read by pingsvc) must be identical — same pattern as `MYSQL_ROOT_PASSWORD` being shared between `db` and `backend`. Skip this and the mock-LAN containers still come up and answer pings/SNMP fine, but pingsvc never calls `GET /discovery/infra-targets-internal` at all — the Infrastructure Targets page will sit there doing nothing no matter how long you wait.
+
+### 1. Bring up the stack with mock-LAN merged in
+
+```bash
+./scripts/run.sh client --with-mock-lan
+```
+
+Under the hood this is `docker compose -f compose.yml -f compose.override.yml -f compose.mock-lan.yml -f compose.mock-lan-client.yml --profile client --profile mock-lan up -d --build` — the normal dev stack, plus `device1`/`device2`/`device3` (172.28.0.11/.12/.13) and `snmpsim` (172.28.0.21, community `public`) joined onto a `mock-lan` bridge network that pingsvc also joins. The script waits for `snmpsim` to answer before returning.
+
+### 2. Register the mock router as an Infrastructure Target
+
+In the dashboard (http://localhost:5173), go to **Infrastructure Targets** (admin) and add:
+
+- **Address**: `snmpsim` (Compose DNS name — pingsvc resolves it on the shared `mock-lan` network)
+- **Kind**: Router
+- **Community**: `public`
+
+### 3. Watch discovery find the fixture devices
+
+Every `ARGUS_DISCOVERY_INTERVAL_SECONDS` (default 60s), pingsvc pulls the enabled Infrastructure Targets, SNMP-polls each one's ARP table, and reports whatever it finds back to the backend:
+
+```bash
+docker compose logs -f pingsvc
+```
+
+```
+discovery: enabled, backend=http://backend:8000, interval=1m0s
+```
+
+Within one cycle, the three fixture devices show up on the **Discovered Devices** admin page (each with a MAC and `discovered_via: arp`). They arrive as pending candidates, not monitored devices — `AUTO_POPULATE_DISCOVERED_DEVICES` defaults to off, so nothing joins the regular ping pipeline until an operator explicitly clicks **Approve** (promotes it into a real `Device`, same effect as `POST /devices/`) or **Reject**.
+
+### Standalone usage (no backend/frontend needed)
+
+To iterate on `arpsweep.go`/`snmp_infra.go` themselves without the rest of the app stack running:
+
+```bash
+./scripts/mock-lan/up.sh           # brings up just the fixture network (project: argus-mock-lan)
+./scripts/mock-lan/smoke-test.sh   # pings each device + snmpwalks snmpsim, confirms fixtures are alive
+./scripts/mock-lan/down.sh         # tears it down
+```
+
+This is the same `compose.mock-lan.yml`, just without `compose.mock-lan-client.yml`'s pingsvc network attachment. For an ad hoc shell with `ping`/`snmpwalk`/`dig` to poke at the fixtures directly:
+
+```bash
+COMPOSE_PROJECT_NAME=argus-mock-lan docker compose -f compose.mock-lan.yml --profile mock-lan exec netshoot sh
+```
+
+### Cleaning up
+
+```bash
+docker compose -f compose.yml -f compose.override.yml -f compose.mock-lan.yml -f compose.mock-lan-client.yml --profile client --profile mock-lan down -v --remove-orphans
+```
+
+(Both `--profile` flags and all four `-f` files are required to match everything `--with-mock-lan` brought up — same reasoning as README.md's note on tearing down a plain `client` stack.)
+
 ## Testing with a custom local domain
 
 By default the stack uses `localhost` with a different port per service. To test subdomain-based routing the way Traefik does it in production, set in `.env`:
