@@ -10,6 +10,8 @@ import {
   LogOut,
   Menu,
   Network,
+  Radar,
+  Router,
   Shield,
   User,
   Users,
@@ -47,12 +49,22 @@ const adminNav: NavItem[] = [
   { to: "/admin/users", label: "Users", icon: Users },
 ];
 
+// Discovery only ever runs where pingsvc runs (client/zone-local) -- same
+// reasoning as clientNav's Devices/Zones split above -- so these are only
+// appended for a client-role deployment, not shown alongside the
+// role-independent adminNav items on a central argus-server.
+const clientAdminNav: NavItem[] = [
+  { to: "/admin/discovered-devices", label: "Discovered Devices", icon: Radar },
+  { to: "/admin/infra-targets", label: "Infrastructure Targets", icon: Router },
+];
+
 export function AppShell() {
   const { user, logout } = useAuthStore();
   const { role, isLoaded } = useAppConfig();
   // Render no nav items until the role probe settles -- a moment of empty
   // sidebar beats flashing client-only links on a server deployment.
   const nav = isLoaded ? (role === "server" ? serverNav : clientNav) : [];
+  const admin = isLoaded && role !== "server" ? [...adminNav, ...clientAdminNav] : adminNav;
   const navigate = useNavigate();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -98,7 +110,7 @@ export function AppShell() {
             <div className={cn("px-3 pt-4 pb-1", collapsed && "hidden")}>
               <p className="text-xs font-semibold uppercase tracking-wider text-gray-400">Admin</p>
             </div>
-            {adminNav.map((item) => (
+            {admin.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

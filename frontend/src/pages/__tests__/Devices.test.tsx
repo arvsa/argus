@@ -5,9 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { DevicesPage } from "@/pages/Devices";
 import * as devicesApi from "@/api/devices";
 import type { DeviceState } from "@/api/devices";
+import * as deviceAssignmentsApi from "@/api/deviceAssignments";
 
 vi.mock("@/api/devices", () => ({
   getState: vi.fn(),
+}));
+vi.mock("@/api/deviceAssignments", () => ({
+  getDeviceAssignments: vi.fn(),
 }));
 
 function device(overrides: Partial<DeviceState> = {}): DeviceState {
@@ -32,6 +36,10 @@ function renderPage() {
 describe("DevicesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({
+      data: [],
+      count: 0,
+    });
   });
 
   it("renders devices once loaded", async () => {
@@ -105,5 +113,31 @@ describe("DevicesPage", () => {
 
     expect(await screen.findByText("192.0.2.2")).toBeInTheDocument();
     expect(devicesApi.getState).toHaveBeenCalledWith({ page: 2, size: 50 });
+  });
+
+  it("shows a device's known name instead of its bare address", async () => {
+    vi.mocked(devicesApi.getState).mockResolvedValue({
+      page: 1,
+      size: 50,
+      total: 1,
+      items: [device({ addr: "192.0.2.1" })],
+    });
+    vi.mocked(deviceAssignmentsApi.getDeviceAssignments).mockResolvedValue({
+      data: [
+        {
+          id: "dev-1",
+          addr: "192.0.2.1",
+          node_id: null,
+          created_at: null,
+          mac: null,
+          hostname: "core-switch",
+          timezone: null,
+        },
+      ],
+      count: 1,
+    });
+    renderPage();
+
+    expect(await screen.findByText("core-switch")).toBeInTheDocument();
   });
 });

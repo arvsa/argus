@@ -32,13 +32,19 @@ type Event struct {
 	// Node/NodeType hierarchy (any depth). Every id gets its own
 	// stats:node:<id> / events:node:<id> fan-out.
 	NodeIDs []string `json:"node_ids,omitempty"`
+	// DeviceKey is "" when no MAC is on file -- evalArgs falls back to Addr,
+	// so an empty DeviceKey is byte-identical to today's addr-only identity.
+	DeviceKey string `json:"device_key,omitempty"`
 }
 
 func nowMs() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 
 // Lua script: atomically compare previous device state, update state, update
 // per-node counters, HSET snapshot, and PUBLISH only when the state changed.
-// KEYS[1] = addr
+// KEYS[1] = device_key (MAC when known, else addr -- see evalArgs/
+// TargetStore.DeviceKeyFor; the local var below is still named "addr" in
+// the script body since it's just the map key here, not literally an
+// address, but the naming isn't worth a body-wide edit)
 // ARGV[1] = newState ("1" or "0")
 // ARGV[2] = jsonPayload
 // ARGV[3] = timestamp ms (for ZADD pings:index)
@@ -49,7 +55,7 @@ func nowMs() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 // chain gets its own stats:node:<id> counter and events:node:<id> publish.
 // If that produced no publish (empty nodeIDs), the event falls back to the
 // generic pings:events channel.
-// state:device:<addr> encodes "<newState>|<nodeIDsCSV>", not just the
+// state:device:<device_key> encodes "<newState>|<nodeIDsCSV>", not just the
 // up/down bit -- a device reassigned to a different Node (or newly
 // assigned from unassigned) needs a fresh aggregation pass into its
 // (possibly new) ancestor chain even when its up/down status hasn't
@@ -60,6 +66,11 @@ func nowMs() int64 { return time.Now().UnixNano() / int64(time.Millisecond) }
 // written by older pingsvc versions have no "|" separator; those are
 // treated as state-only with an empty prior node chain, which migrates
 // them correctly on their very next observation.
+//
+// pings:state and pings:index become device_key-keyed too, not just
+// state:device:* -- an intended consequence of KEYS[1] changing, not a bug.
+// backend's /state and /state_scan routes are unaffected: they read Addr off
+// the JSON payload on the success path, not the hash/zset key itself.
 const publishIfChangedAndAggregateScript = `
 local addr = KEYS[1]
 local newState = ARGV[1]
@@ -148,12 +159,12 @@ return 1
 
 // reconcileRemovedTargetScript undoes a device's last-known contribution
 // to stats:node:<id> and removes its ghost entries from pings:state/
-// pings:index/state:device:<addr>. Used only for addresses that are no
-// longer in the CURRENT target list at all (the Device row was deleted,
-// or a line was hand-removed from targets.txt) -- unlike a reassignment
-// or an up/down flip, there is no future ping for these addresses that
-// could ever trigger the usual change-detection cleanup in
-// publishIfChangedAndAggregateScript, so it has to happen here instead.
+// pings:index/state:device:<device_key>. Used only for device_keys no
+// longer represented in the CURRENT target list at all (the Device row was
+// deleted, or a line was hand-removed from targets.txt) -- unlike a
+// reassignment, an address change, or an up/down flip, there is no future
+// ping for these that could ever trigger the usual change-detection cleanup
+// in publishIfChangedAndAggregateScript, so it has to happen here instead.
 const reconcileRemovedTargetScript = `
 local addr = KEYS[1]
 local key = "state:device:" .. addr
@@ -192,12 +203,16 @@ func loadReconcileScript(ctx context.Context, rdb redis.Cmdable) (string, error)
 	return rdb.ScriptLoad(ctx, reconcileRemovedTargetScript).Result()
 }
 
-// reconcileRemovedTargets scans every state:device:<addr> key left over
-// from a previous run and, for any address no longer present in the
-// current target list, removes its stale contribution and ghost entries
+// reconcileRemovedTargets scans every state:device:<device_key> key left
+// over from a previous run and, for any device_key no longer represented in
+// the current target list, removes its stale contribution and ghost entries
 // via reconcileRemovedTargetScript. Meant to run once at startup, right
 // after loading the current targets file.
-func reconcileRemovedTargets(ctx context.Context, rdb redis.Cmdable, sha string, targetsByAddr map[string][]string) error {
+//
+// Operating on device_key rather than addr is what makes an address change
+// for a still-live device a no-op here: the device_key persists across the
+// change, so nothing gets cleaned up just because its old addr moved on.
+func reconcileRemovedTargets(ctx context.Context, rdb redis.Cmdable, sha string, liveDeviceKeys map[string]struct{}) error {
 	var cursor uint64
 	for {
 		keys, next, err := rdb.Scan(ctx, cursor, "state:device:*", 500).Result()
@@ -205,11 +220,11 @@ func reconcileRemovedTargets(ctx context.Context, rdb redis.Cmdable, sha string,
 			return err
 		}
 		for _, key := range keys {
-			addr := strings.TrimPrefix(key, "state:device:")
-			if _, ok := targetsByAddr[addr]; ok {
+			deviceKey := strings.TrimPrefix(key, "state:device:")
+			if _, ok := liveDeviceKeys[deviceKey]; ok {
 				continue
 			}
-			if err := rdb.EvalSha(ctx, sha, []string{addr}).Err(); err != nil {
+			if err := rdb.EvalSha(ctx, sha, []string{deviceKey}).Err(); err != nil {
 				return err
 			}
 		}
@@ -229,20 +244,32 @@ func reconcileRemovedTargets(ctx context.Context, rdb redis.Cmdable, sha string,
 type Target struct {
 	Addr    string
 	NodeIDs []string
+	// DeviceKey is "" when no MAC is on file for this device -- callers
+	// fall back to Addr (see TargetStore.DeviceKeyFor), never here.
+	DeviceKey string
 }
 
-// evalArgs builds the KEYS[1] address and ARGV list used by
+// evalArgs builds the KEYS[1] device_key and ARGV list used by
 // publishIfChangedAndAggregateScript for a single event. Extracted so the
 // batcher's pipelined path and the single-shot publishAndAggregate path
 // (used directly in tests) can't drift out of sync with each other.
-func evalArgs(ev Event) (addr string, argv []any) {
+//
+// deviceKey falls back to ev.Addr when ev.DeviceKey is empty -- this is the
+// one chokepoint that makes "no MAC on file" byte-identical to pre-
+// device_key behavior, with zero changes needed to any existing Event{}
+// literal built without a DeviceKey.
+func evalArgs(ev Event) (deviceKey string, argv []any) {
 	newState := "0"
 	if ev.OK {
 		newState = "1"
 	}
 	raw, _ := json.Marshal(ev)
 	nodeIDsCSV := strings.Join(ev.NodeIDs, ",")
-	return ev.Addr, []any{
+	deviceKey = ev.DeviceKey
+	if deviceKey == "" {
+		deviceKey = ev.Addr
+	}
+	return deviceKey, []any{
 		newState, string(raw), strconv.FormatInt(ev.TS, 10), nodeIDsCSV,
 	}
 }
@@ -263,8 +290,8 @@ func loadPublishScript(ctx context.Context, rdb redis.Cmdable) (string, error) {
 // miniredis-backed client in tests. Returns true if the script published an
 // event (i.e. the state changed).
 func publishAndAggregate(ctx context.Context, rdb redis.Cmdable, sha string, ev Event) (bool, error) {
-	addr, argv := evalArgs(ev)
-	res, err := rdb.EvalSha(ctx, sha, []string{addr}, argv...).Result()
+	deviceKey, argv := evalArgs(ev)
+	res, err := rdb.EvalSha(ctx, sha, []string{deviceKey}, argv...).Result()
 	if err != nil {
 		return false, err
 	}
@@ -355,6 +382,10 @@ func main() {
 	backendURL := flag.String("backend-url", getenv("ARGUS_BACKEND_URL", ""), "base URL of this zone's own backend, e.g. http://backend:8000 (empty = target hot-reload disabled)")
 	syncToken := flag.String("sync-token", getenv("ARGUS_PINGSVC_SYNC_TOKEN", ""), "shared secret presented to the backend's targets-hash/targets-export-internal routes (must match the backend's PINGSVC_SYNC_TOKEN)")
 	syncInterval := flag.Duration("sync-interval", getenvDurationSeconds("ARGUS_TARGET_SYNC_INTERVAL_SECONDS", 30*time.Second), "how often to poll the backend for target-list changes")
+	discoveryInterval := flag.Duration("discovery-interval", getenvDurationSeconds("ARGUS_DISCOVERY_INTERVAL_SECONDS", 60*time.Second), "how often to poll configured infrastructure targets for ARP-table discovery (less urgent than -sync-interval -- discovery doesn't affect live ping targets)")
+	snmpTimeout := flag.Duration("snmp-timeout", getenvDurationSeconds("ARGUS_SNMP_TIMEOUT_SECONDS", 2*time.Second), "per-request timeout for infra-target ARP-table polling and endpoint hostname enrichment (plan §4: short timeout, low retry count so polling unreachable/filtered targets doesn't dominate a discovery cycle)")
+	snmpRetries := flag.Int("snmp-retries", 1, "retry count for infra-target ARP-table polling and endpoint hostname enrichment")
+	enrichCommunity := flag.String("snmp-enrich-community", getenv("ARGUS_SNMP_ENRICH_COMMUNITY", "public"), "SNMP v2c community used for endpoint hostname enrichment (snmp_enrich.go) -- separate from each InfraPollTarget's own credential, which is only used for that target's own ARP-table poll")
 
 	flag.Parse()
 
@@ -499,17 +530,21 @@ func main() {
 	// targets.txt) -- there's no future ping for a removed address that
 	// could otherwise correct its old stats:node:<id> contribution or its
 	// pings:state/pings:index ghost entry.
-	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, targetStore.v.Load().targetsByAddr); err != nil {
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, targetStore.LiveDeviceKeys()); err != nil {
 		log.Printf("reconcile removed targets: %v", err)
 	}
 
-	// pre-seed state and index so /state returns all devices immediately
+	// pre-seed state and index so /state returns all devices immediately --
+	// keyed by device_key, matching what the real publish path will key
+	// pings:state/pings:index by, so this never leaves behind an orphaned
+	// addr-keyed ghost entry for a device with a known MAC.
 	for _, t := range targetStore.Targets() {
 		ts := nowMs()
-		ev := Event{Addr: t.Addr, OK: false, TS: ts, Interval: int64(interval.Milliseconds()), NodeIDs: t.NodeIDs}
+		deviceKey := targetStore.DeviceKeyFor(t.Addr)
+		ev := Event{Addr: t.Addr, DeviceKey: deviceKey, OK: false, TS: ts, Interval: int64(interval.Milliseconds()), NodeIDs: t.NodeIDs}
 		raw, _ := json.Marshal(ev)
-		_ = rdb.HSet(ctx, "pings:state", t.Addr, raw).Err()
-		_ = rdb.ZAdd(ctx, "pings:index", redis.Z{Score: float64(ts), Member: t.Addr}).Err()
+		_ = rdb.HSet(ctx, "pings:state", deviceKey, raw).Err()
+		_ = rdb.ZAdd(ctx, "pings:index", redis.Z{Score: float64(ts), Member: deviceKey}).Err()
 	}
 
 	log.Printf("starting pingsvc: %d targets, interval=%v, timeout=%v, redis=%s, workers=%d, batch=%d",
@@ -531,6 +566,24 @@ func main() {
 			ReconcileSha: reconcileSha,
 		})
 		log.Printf("targetsync: enabled, backend=%s, interval=%v", *backendURL, *syncInterval)
+	}
+
+	// Infra discovery (opt-in, see discovery.go / plan/device-discovery-v1.md
+	// §2.8): reuses the same backend connection as target-sync -- no new
+	// pingsvc-side connection config at all. Naturally a no-op whenever the
+	// backend has zero InfraPollTarget rows configured, so this is gated
+	// purely on -backend-url like target-sync, not a separate flag.
+	var stopDiscovery func()
+	if *backendURL != "" {
+		stopDiscovery = runDiscovery(ctx, DiscoveryConfig{
+			BackendURL:      *backendURL,
+			SyncToken:       *syncToken,
+			Interval:        *discoveryInterval,
+			SNMPTimeout:     *snmpTimeout,
+			SNMPRetries:     *snmpRetries,
+			EnrichCommunity: *enrichCommunity,
+		})
+		log.Printf("discovery: enabled, backend=%s, interval=%v", *backendURL, *discoveryInterval)
 	}
 
 	// Channels
@@ -578,7 +631,7 @@ func main() {
 					p, err := ping.NewPinger(addr)
 					if err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
+						ev := Event{Addr: addr, DeviceKey: targetStore.DeviceKeyFor(addr), TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -592,7 +645,7 @@ func main() {
 					p.Timeout = *timeout
 					if err := p.Run(); err != nil {
 						metrPingsFailed.Inc()
-						ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
+						ev := Event{Addr: addr, DeviceKey: targetStore.DeviceKeyFor(addr), TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: false, Err: err.Error(), NodeIDs: targetStore.NodeIDsFor(addr)}
 						raw, _ := json.Marshal(ev)
 						select {
 						case results <- raw:
@@ -624,7 +677,7 @@ func main() {
 						metrStateChanges.WithLabelValues("down").Inc()
 					}
 
-					ev := Event{Addr: addr, TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp, NodeIDs: targetStore.NodeIDsFor(addr)}
+					ev := Event{Addr: addr, DeviceKey: targetStore.DeviceKeyFor(addr), TS: nowMs(), Interval: int64(interval.Milliseconds()), OK: isUp, NodeIDs: targetStore.NodeIDsFor(addr)}
 					raw, _ := json.Marshal(ev)
 					select {
 					case results <- raw:
@@ -656,11 +709,11 @@ func main() {
 			for _, raw := range buf {
 				var ev Event
 				_ = json.Unmarshal(raw, &ev)
-				addr, argv := evalArgs(ev)
+				deviceKey, argv := evalArgs(ev)
 
 				// EVALSHA returns integer 1 if publish occurred, 0 otherwise
 				// Queue the EvalSha call in the pipeline
-				cmd := pipe.EvalSha(context.Background(), sha, []string{addr}, argv...)
+				cmd := pipe.EvalSha(context.Background(), sha, []string{deviceKey}, argv...)
 				resultsCmds = append(resultsCmds, cmd)
 			}
 
@@ -683,8 +736,8 @@ func main() {
 					for _, raw := range buf {
 						var ev Event
 						_ = json.Unmarshal(raw, &ev)
-						addr, argv := evalArgs(ev)
-						pipe2.EvalSha(context.Background(), sha, []string{addr}, argv...)
+						deviceKey, argv := evalArgs(ev)
+						pipe2.EvalSha(context.Background(), sha, []string{deviceKey}, argv...)
 					}
 					_, err2 := pipe2.Exec(context.Background())
 					if err2 != nil {
@@ -786,6 +839,9 @@ loop:
 	if stopTargetSync != nil {
 		stopTargetSync()
 	}
+	if stopDiscovery != nil {
+		stopDiscovery()
+	}
 
 	log.Println("shutting down")
 }
@@ -818,11 +874,20 @@ func parseTargets(body string) []Target {
 }
 
 func parseTargetLine(line string) Target {
-	addr, nodeIDsField, hasNodeIDs := strings.Cut(line, ",")
-	if !hasNodeIDs || nodeIDsField == "" {
-		return Target{Addr: addr}
+	// Up to 3 comma-separated fields: addr, semicolon-joined ancestor/node_id
+	// chain (unchanged format, may be empty), device_key (new, optional, a
+	// bare string with no internal delimiter). All three are backward
+	// compatible with fewer fields: a bare addr, or the existing
+	// "addr,ancestors" 2-field format, parse exactly as they did before.
+	parts := strings.SplitN(line, ",", 3)
+	t := Target{Addr: parts[0]}
+	if len(parts) >= 2 && parts[1] != "" {
+		t.NodeIDs = strings.Split(parts[1], ";")
 	}
-	return Target{Addr: addr, NodeIDs: strings.Split(nodeIDsField, ";")}
+	if len(parts) == 3 && parts[2] != "" {
+		t.DeviceKey = parts[2]
+	}
+	return t
 }
 
 // getenv, splitLines, waitForRedis copied/kept from your original code

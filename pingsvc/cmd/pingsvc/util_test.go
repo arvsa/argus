@@ -82,6 +82,9 @@ func assertTargetsEqual(t *testing.T, got, want []Target) {
 		if got[i].Addr != want[i].Addr {
 			t.Errorf("targets[%d].Addr = %q, want %q", i, got[i].Addr, want[i].Addr)
 		}
+		if got[i].DeviceKey != want[i].DeviceKey {
+			t.Errorf("targets[%d].DeviceKey = %q, want %q", i, got[i].DeviceKey, want[i].DeviceKey)
+		}
 		if len(got[i].NodeIDs) != len(want[i].NodeIDs) {
 			t.Fatalf("targets[%d].NodeIDs = %v, want %v", i, got[i].NodeIDs, want[i].NodeIDs)
 		}
@@ -152,4 +155,59 @@ func TestLoadTargets_TrailingCommaWithNoAncestorsYieldsNoNodeIDs(t *testing.T) {
 	got := loadTargets(path)
 	want := []Target{{Addr: "10.0.0.1"}}
 	assertTargetsEqual(t, got, want)
+}
+
+func TestLoadTargets_WithDeviceKey(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "targets.txt")
+	// Third comma-separated field is the new device_key (typically a MAC),
+	// added after the existing semicolon-joined ancestor/node_id chain.
+	content := "10.0.0.1,node-9,AA:BB:CC:DD:EE:FF\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write fixture file: %v", err)
+	}
+
+	got := loadTargets(path)
+	want := []Target{
+		{Addr: "10.0.0.1", NodeIDs: []string{"node-9"}, DeviceKey: "AA:BB:CC:DD:EE:FF"},
+	}
+	assertTargetsEqual(t, got, want)
+}
+
+func TestLoadTargets_UnassignedWithDeviceKeyUsesEmptyMiddleField(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "targets.txt")
+	// An unassigned device (no ancestors/node_id) with a known device_key
+	// must use an empty middle field ("addr,,mac") -- "addr,mac" would be
+	// indistinguishable from the existing 2-field "assigned, no mac" format
+	// and get misparsed as a bogus single-entry NodeIDs chain.
+	content := "10.0.0.1,,AA:BB:CC:DD:EE:FF\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write fixture file: %v", err)
+	}
+
+	got := loadTargets(path)
+	want := []Target{{Addr: "10.0.0.1", DeviceKey: "AA:BB:CC:DD:EE:FF"}}
+	assertTargetsEqual(t, got, want)
+}
+
+func TestLoadTargets_NoDeviceKeyLeavesFieldEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "targets.txt")
+	content := "10.0.0.1\n10.0.0.2,node-9\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed to write fixture file: %v", err)
+	}
+
+	got := loadTargets(path)
+	want := []Target{
+		{Addr: "10.0.0.1"},
+		{Addr: "10.0.0.2", NodeIDs: []string{"node-9"}},
+	}
+	assertTargetsEqual(t, got, want)
+	for i := range got {
+		if got[i].DeviceKey != "" {
+			t.Errorf("targets[%d].DeviceKey = %q, want empty (no fallback at parse time)", i, got[i].DeviceKey)
+		}
+	}
 }

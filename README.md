@@ -50,7 +50,6 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 | **pingsvc** | Concurrent ICMP ping daemon (Go). Its `-role` flag (`pingsvc` / `exporter` / `both`) determines whether it just pings, just exports/pushes snapshots, or both — `both` is what makes a deployment an `argus-client`. |
 | **db** | MySQL 8 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
-| **adminer** | Database web UI |
 | **frontend** | React + Vite + TypeScript operator dashboard. Runs in Docker (dev target, hot reload) or locally via `npm` -- see Quick Start below. |
 
 ## Quick Start
@@ -75,12 +74,19 @@ Local URLs once running:
 - Frontend dashboard: http://localhost:5173
 - Backend API: http://localhost:8000
 - API docs (Swagger): http://localhost:8000/docs
-- Adminer (DB UI): http://localhost:8080
 - pingsvc Prometheus metrics: http://localhost:9090/metrics (client mode only)
 
 The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`).
 
 `client` mode brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
+
+To exercise device discovery (SNMP infra polling, plan/device-discovery-v1.md) without real network hardware, add `--with-mock-lan`:
+
+```bash
+./scripts/run.sh client --with-mock-lan
+```
+
+This joins a small fixture environment (three ICMP-only "devices" plus an `snmpsim` mock router) onto pingsvc's own network as part of the same stack — no extra setup for the fixture itself. Discovery does need pingsvc's backend connection turned on first though (`ARGUS_BACKEND_URL`/`PINGSVC_SYNC_TOKEN` in `.env` — off by default, same as target hot-reload); see the full walkthrough in **[development.md](development.md#exercising-device-discovery-with-the-mock-lan-fixture)** for that one-time step, adding the Infrastructure Target, and reviewing what discovery finds on the Discovered Devices page. Standalone usage (without the rest of the app stack) is still available via `scripts/mock-lan/{up,down,smoke-test}.sh` — see `compose.mock-lan.yml`'s header comment.
 
 Prefer to skip `scripts/run.sh` and run the underlying `docker compose` commands yourself? See **[development.md's Docker Compose basics](development.md#docker-compose-basics)**.
 

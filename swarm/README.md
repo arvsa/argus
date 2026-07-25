@@ -100,6 +100,27 @@ After forcing an update, give Traefik a few seconds to re-register the new
 task's endpoint — a request right after a force-update can 404 or 502
 briefly before it converges.
 
+## Deploying a subset of services
+
+`deploy.sh` normally deploys every service in the role's whole
+`stack.{client,server}.yml`. `--services` deploys only the named ones:
+
+```bash
+./scripts/swarm/deploy.sh client 3 --services backend,pingsvc
+```
+
+Useful for isolating one piece without the rest of a zone's footprint. Two
+things to know:
+- Filtering happens via `docker compose config <services>` before handing
+  the result to `docker stack deploy` -- variable interpolation is a
+  whole-file pass *before* filtering, so every `${VAR?required}` anywhere
+  in the stack file (even one referenced only by an excluded service) still
+  has to be set, same as a full deploy.
+- Excluded services' dependencies aren't started for you -- `backend`
+  without `db`, or `pingsvc` without `redis`, will come up but fail to
+  connect. This is a raw filtering tool, not a curated list of
+  known-good subsets.
+
 ## Testing integration between services (client ↔ MinIO ↔ server)
 
 `dev-setup.sh` already wires `argus-client-1` and `argus-server-1` together

@@ -223,7 +223,7 @@ func TestReconcileRemovedTargets_DecrementsStatsAndCleansUpGhostEntries(t *testi
 	}
 	assertHashField(t, ctx, rdb, "stats:node:node-301", "down", "1")
 
-	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string][]string{}); err != nil {
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string]struct{}{}); err != nil {
 		t.Fatalf("reconcileRemovedTargets() error = %v", err)
 	}
 
@@ -253,13 +253,85 @@ func TestReconcileRemovedTargets_LeavesCurrentTargetsUntouched(t *testing.T) {
 		t.Fatalf("seed publish error = %v", err)
 	}
 
-	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string][]string{addr: {"node-302"}}); err != nil {
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string]struct{}{addr: {}}); err != nil {
 		t.Fatalf("reconcileRemovedTargets() error = %v", err)
 	}
 
 	assertHashField(t, ctx, rdb, "stats:node:node-302", "down", "1")
 	if _, err := rdb.HGet(ctx, "pings:state", addr).Result(); err != nil {
 		t.Errorf("pings:state[%s] should still exist, error = %v", addr, err)
+	}
+}
+
+func TestPublishAndAggregate_NoDeviceKeyFallsBackToAddr_ByteIdenticalToToday(t *testing.T) {
+	// Regression proof (plan/device-discovery-v1.md §3 step 1): an Event
+	// with no DeviceKey set must behave exactly as it did before device_key
+	// existed -- state:device:<addr>, nothing keyed by anything else.
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	addr := "10.0.6.1"
+	ev := Event{Addr: addr, OK: true, TS: 1000}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("publishAndAggregate() error = %v", err)
+	}
+
+	if _, err := rdb.Get(ctx, "state:device:"+addr).Result(); err != nil {
+		t.Errorf("state:device:%s should exist, error = %v", addr, err)
+	}
+	if _, err := rdb.HGet(ctx, "pings:state", addr).Result(); err != nil {
+		t.Errorf("pings:state[%s] should exist, error = %v", addr, err)
+	}
+}
+
+func TestPublishAndAggregate_DeviceKeyDeterminesStateKey(t *testing.T) {
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+
+	addr := "10.0.6.2"
+	deviceKey := "AA:BB:CC:DD:EE:FF"
+	ev := Event{Addr: addr, DeviceKey: deviceKey, OK: true, TS: 1000}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("publishAndAggregate() error = %v", err)
+	}
+
+	if _, err := rdb.Get(ctx, "state:device:"+deviceKey).Result(); err != nil {
+		t.Errorf("state:device:%s should exist, error = %v", deviceKey, err)
+	}
+	if _, err := rdb.Get(ctx, "state:device:"+addr).Result(); err != redis.Nil {
+		t.Errorf("state:device:%s error = %v, want redis.Nil (keyed by device_key, not addr)", addr, err)
+	}
+	if _, err := rdb.HGet(ctx, "pings:state", deviceKey).Result(); err != nil {
+		t.Errorf("pings:state[%s] should exist, error = %v", deviceKey, err)
+	}
+}
+
+func TestReconcileRemovedTargets_AddressChangeForLiveDeviceKeyDoesNotReconcile(t *testing.T) {
+	// A device whose IP changed is still a live device_key -- the reconcile
+	// path must not clean it up just because its old address is no longer
+	// what's stored under state:device:<device_key>.
+	_, rdb, sha := newTestRedis(t)
+	ctx := context.Background()
+	reconcileSha, err := loadReconcileScript(ctx, rdb)
+	if err != nil {
+		t.Fatalf("loadReconcileScript() error = %v", err)
+	}
+
+	deviceKey := "AA:BB:CC:DD:EE:FF"
+	ev := Event{Addr: "10.0.6.3", DeviceKey: deviceKey, OK: false, TS: 1000, NodeIDs: []string{"node-303"}}
+	if _, err := publishAndAggregate(ctx, rdb, sha, ev); err != nil {
+		t.Fatalf("seed publish error = %v", err)
+	}
+
+	// Simulate the address having changed: the live set still contains the
+	// device_key, even though no target currently has addr "10.0.6.3".
+	if err := reconcileRemovedTargets(ctx, rdb, reconcileSha, map[string]struct{}{deviceKey: {}}); err != nil {
+		t.Fatalf("reconcileRemovedTargets() error = %v", err)
+	}
+
+	assertHashField(t, ctx, rdb, "stats:node:node-303", "down", "1")
+	if _, err := rdb.Get(ctx, "state:device:"+deviceKey).Result(); err != nil {
+		t.Errorf("state:device:%s should still exist, error = %v", deviceKey, err)
 	}
 }
 

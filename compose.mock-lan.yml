@@ -1,0 +1,82 @@
+# Dev/test-only mock local-network environment for pingsvc's device-discovery
+# mechanism (plan/device-discovery-v1.md §2.9) -- NOT part of any production
+# topology, not wired into scripts/swarm/* (Swarm's overlay driver doesn't
+# give arpsweep.go the real L2 semantics this needs -- see below).
+#
+# Two ways to use this file:
+#   - Merged into the main dev stack: `scripts/run.sh client --with-mock-lan`
+#     runs `docker compose -f compose.yml -f compose.mock-lan.yml -f
+#     compose.mock-lan-client.yml --profile client --profile mock-lan up -d`,
+#     joining pingsvc (see compose.mock-lan-client.yml) onto the same
+#     `mock-lan` network as these fixture containers -- no manual `docker
+#     network connect` needed, pingsvc reaches `snmpsim`/`device1` etc. by
+#     plain Compose DNS name. This file has no project `name:` of its own so
+#     it merges into whichever project the invoking command uses (falls back
+#     to the directory-basename default, matching compose.yml's own).
+#   - Standalone: scripts/mock-lan/{up,down,smoke-test}.sh, which explicitly
+#     set COMPOSE_PROJECT_NAME=argus-mock-lan and --profile mock-lan
+#     themselves -- useful for iterating on arpsweep.go/snmp_infra.go without
+#     the rest of the app stack running at all.
+#
+# All fixture services are behind the "mock-lan" profile (opt-in, mirrors
+# compose.yml's own "client" profile for redis/pingsvc) so a plain
+# `docker compose up` never starts them by accident.
+#
+# Plain Docker Compose rather than a Swarm stack, deliberately: Swarm's
+# overlay network is a VXLAN tunnel abstraction, while Compose's default
+# bridge driver is a real Linux bridge (veth pairs) -- what a future
+# arpsweep.go needs to observe genuine ARP resolution between containers.
+#
+# Two independent things get mocked here:
+#   - snmpsim serves canned SNMP OID responses (protocol-response mock, no
+#     real L2 needed at all -- see mock-lan/snmpsim/).
+#   - device1/device2/device3 are cheap ICMP-only targets on a real bridge
+#     network, for testing an active ARP sweep against a genuine (if
+#     virtual) neighbor table.
+
+networks:
+  mock-lan:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+services:
+  device1:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    profiles: ["mock-lan"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.11
+
+  device2:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    profiles: ["mock-lan"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.12
+
+  device3:
+    image: alpine:3.24
+    command: ["sleep", "infinity"]
+    profiles: ["mock-lan"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.13
+
+  snmpsim:
+    build: ./mock-lan/snmpsim
+    profiles: ["mock-lan"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.21
+
+  netshoot:
+    image: nicolaka/netshoot:latest
+    command: ["sleep", "infinity"]
+    profiles: ["mock-lan"]
+    networks:
+      mock-lan:
+        ipv4_address: 172.28.0.31

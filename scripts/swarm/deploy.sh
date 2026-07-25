@@ -5,6 +5,20 @@
 #   ./scripts/swarm/deploy.sh server        # stack argus-server-1
 #   ./scripts/swarm/deploy.sh client        # stack argus-client-1
 #   ./scripts/swarm/deploy.sh client 2      # stack argus-client-2 (a 2nd zone)
+#   ./scripts/swarm/deploy.sh client 1 --services backend,pingsvc
+#                                            # only those two services, rest
+#                                            # of the stack left untouched
+#
+# --services filters the rendered stack config down to just the named
+# services (via `docker compose config`, which resolves them plus their
+# transitive depends_on) before handing it to `docker stack deploy` --
+# swarm/stack.*.yml files don't use depends_on today (see their own header
+# comments), so there's nothing transitive to pull in for this repo's
+# stacks as they stand. Variable interpolation happens as a whole-file pass
+# before filtering, so every ${VAR?required} referenced anywhere in the
+# stack file -- even by an excluded service -- must still be set; the .env
+# sourcing below already covers this in practice. Omit the flag for
+# unchanged full-stack-deploy behavior.
 #
 # Prereqs: swarm mode active, the traefik-public overlay network + a Traefik
 # stack deployed (scripts/swarm/dev-setup.sh does all of it for local dev),
@@ -26,14 +40,31 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <client|server> [number>=1]" >&2
+  echo "Usage: $0 <client|server> [number>=1] [--services svc1,svc2,...]" >&2
   exit 1
 }
 
 ROLE_ARG="${1:-}"
-NUM="${2:-1}"
 case "$ROLE_ARG" in client|server) ;; *) usage ;; esac
-[[ "$NUM" =~ ^[0-9]+$ ]] || usage
+shift || usage
+
+NUM=1
+if [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+  NUM="$1"
+  shift
+fi
+
+SERVICES=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --services)
+      SERVICES="${2:-}"
+      [ -n "$SERVICES" ] || usage
+      shift 2
+      ;;
+    *) usage ;;
+  esac
+done
 
 cd "$(dirname "$0")/../.."
 REPO_DIR="$(pwd)"
@@ -102,11 +133,30 @@ if ! docker image inspect "${DOCKER_IMAGE_BACKEND}:${TAG}" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> deploying stack ${STACK_NAME} (domain ${DOMAIN}, tag ${TAG})"
 # --resolve-image never: don't try to pin registry digests for locally
 # built images (single-node); set REGISTRY + build.sh --push for multi-node.
-docker stack deploy --detach=true --prune --resolve-image never \
-  -c "swarm/stack.${ROLE_ARG}.yml" "$STACK_NAME"
+if [ -n "$SERVICES" ]; then
+  echo "==> deploying stack ${STACK_NAME} (domain ${DOMAIN}, tag ${TAG}, services: ${SERVICES})"
+  IFS=',' read -r -a SERVICE_ARGS <<< "$SERVICES"
+  # Unlike `docker stack deploy` reading the raw stack file directly (the
+  # no-filter path below), routing through `docker compose config` first
+  # bakes in Compose's OWN project-name inference as explicit `name:`
+  # sub-fields on every network/volume -- COMPOSE_PROJECT_NAME=$STACK_NAME
+  # makes that inferred name match what swarm would have derived from
+  # $STACK_NAME anyway (e.g. "argus-client-3_default"), rather than some
+  # unrelated directory-basename guess. The top-level `name:` (the
+  # resolved project name at the document root) still has to be stripped
+  # separately -- `docker stack deploy -c -` rejects that specific key
+  # ("Additional property name is not allowed") even though the same name
+  # baked into each resource's own `name:` sub-field is fine.
+  COMPOSE_PROJECT_NAME="$STACK_NAME" docker compose -f "swarm/stack.${ROLE_ARG}.yml" config "${SERVICE_ARGS[@]}" \
+    | grep -v '^name:' \
+    | docker stack deploy --detach=true --prune --resolve-image never -c - "$STACK_NAME"
+else
+  echo "==> deploying stack ${STACK_NAME} (domain ${DOMAIN}, tag ${TAG})"
+  docker stack deploy --detach=true --prune --resolve-image never \
+    -c "swarm/stack.${ROLE_ARG}.yml" "$STACK_NAME"
+fi
 
 echo "==> deployed. Watch:  docker stack ps ${STACK_NAME}"
 echo "    dashboard: ${SCHEME}://dashboard.${DOMAIN}"
