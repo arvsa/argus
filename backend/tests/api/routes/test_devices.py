@@ -8,8 +8,10 @@ import hashlib
 import uuid
 
 from fastapi.testclient import TestClient
+from sqlalchemy import event
 
 from app.core.config import settings
+from app.core.db import engine
 from tests.utils.utils import get_superuser_token_headers, random_lower_string
 
 API = settings.API_V1_STR
@@ -340,6 +342,59 @@ def test_targets_export_format(client: TestClient) -> None:
     lines = r.text.strip("\n").split("\n")
     assert f"203.0.113.10,{root['id']};{child['id']}" in lines
     assert "203.0.113.11" in lines
+
+
+def test_targets_export_query_count_does_not_scale_with_distinct_node_count(
+    client: TestClient,
+) -> None:
+    """Regression test for an N+1 in build_targets_export: it used to call
+    session.get(Node, device.node_id) once per device inside the export
+    loop, so every additional *distinct* node a device is assigned to added
+    one more DB round-trip -- fine for a handful of devices, ~1000 extra
+    queries per call at 1k devices each on their own node, on a route
+    pingsvc polls every ARGUS_TARGET_SYNC_INTERVAL_SECONDS (default 30s)
+    regardless of whether anything changed. Asserts query count is flat
+    (batched into one Node lookup) rather than hardcoding a fragile
+    absolute number tied to unrelated auth-dependency queries."""
+    headers = _su(client)
+    tenant_id = random_lower_string()
+    root_type = _root_type(client, headers, tenant_id)
+
+    def _add_devices_on_distinct_nodes(n: int, addr_offset: int) -> None:
+        for i in range(n):
+            node = _root_node(client, headers, root_type["id"])
+            client.post(
+                f"{API}/devices/",
+                headers=headers,
+                json={"addr": f"203.0.113.{addr_offset + i}", "node_id": node["id"]},
+            )
+
+    def _count_export_queries() -> int:
+        count = 0
+
+        def before_cursor_execute(*_args: object, **_kwargs: object) -> None:
+            nonlocal count
+            count += 1
+
+        event.listen(engine, "before_cursor_execute", before_cursor_execute)
+        try:
+            r = client.get(f"{API}/devices/targets-export", headers=headers)
+            assert r.status_code == 200, r.text
+        finally:
+            event.remove(engine, "before_cursor_execute", before_cursor_execute)
+        return count
+
+    _add_devices_on_distinct_nodes(1, 150)
+    baseline = _count_export_queries()
+
+    _add_devices_on_distinct_nodes(9, 160)  # 9 more devices, each on a brand-new node
+    scaled = _count_export_queries()
+
+    assert scaled == baseline, (
+        f"query count grew from {baseline} to {scaled} after adding 9 more "
+        "distinct nodes -- build_targets_export is issuing one Node query "
+        "per distinct node instead of a single batched lookup"
+    )
 
 
 def test_targets_export_requires_superuser(

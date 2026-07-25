@@ -90,11 +90,24 @@ def build_targets_export(session: Session) -> str:
     would actually fetch.
     """
     devices = session.exec(select(Device)).all()
+
+    # Batched into one query rather than one session.get(Node, ...) per
+    # device -- pingsvc's targetsync polls /targets-hash (which calls this)
+    # every ARGUS_TARGET_SYNC_INTERVAL_SECONDS regardless of whether
+    # anything changed, so a per-device Node lookup here would add one DB
+    # round-trip per distinct node on every single poll.
+    node_ids = {device.node_id for device in devices if device.node_id is not None}
+    nodes_by_id = (
+        {node.id: node for node in session.exec(select(Node).where(Node.id.in_(node_ids))).all()}
+        if node_ids
+        else {}
+    )
+
     lines = []
     for device in devices:
         ancestors = ""
         if device.node_id is not None:
-            node = session.get(Node, device.node_id)
+            node = nodes_by_id.get(device.node_id)
             if node is not None:
                 # Shouldn't be None (ondelete=SET NULL keeps this in sync),
                 # but degrade to no ancestors rather than erroring the
