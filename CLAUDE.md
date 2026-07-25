@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Task
+
+You are a senior software engineer working with me on this project. We are responsible for designing technical solutions for new features, bugs and optimization. You are tasked with suggesting designing plans, implementation and documentation. Make sure that the code is logical, readable (with minimum comments) and optimized (avoid complex solutions and many I/O reads). 
+
 ## What This Project Is
 
 A network device monitoring system. It pings thousands of devices, tracks their up/down state in Redis, and streams live status updates to clients over WebSockets. Deployable as a single stack, or split across independent **zones** (e.g. one per building/site) that each run their own local monitoring and push signed, aggregated snapshots to a central `argus-server` dashboard. See [plan/dynamic-hierarchy-multi-zone-architecture.md](plan/dynamic-hierarchy-multi-zone-architecture.md) and its [implementation summary](plan/dynamic-hierarchy-multi-zone-implementation-summary.md) for the design and what's shipped.
@@ -30,6 +34,8 @@ docker compose watch backend       # start stack with hot reload on backend
 docker compose logs backend        # tail backend logs
 docker compose stop backend        # stop just the backend (run local dev server instead)
 ```
+
+For Multizone development use docker swarm. You can use scripts in [scripts/swarm](scripts/swarm). Make sure that you teardown the environment after you are done with an implementation. Verify by checking stack up using docker cli.  
 
 Full backend test suite, used in the [Feature Branch Workflow](#feature-branch-workflow) below:
 
@@ -67,14 +73,14 @@ argus-server backend ingestion_task (startup lifespan, polls the bucket)
 ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_stale)
 ```
 
-`ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export. See [development.md](development.md#running-a-full-argus-client--argus-server-locally) for a fully worked two-terminal walkthrough.
+`ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export.
 
 ### Data model
 
 ```
 NodeType → Node → Device
 ```
-`NodeType`/`Node` form an admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart — see [hierarchy.md](hierarchy.md) for the full setup walkthrough). This replaced an earlier fixed `Campus → Building → Room → Device` chain, fully retired (tables dropped, routes and tests removed, no trace left in `models.py`).
+`NodeType`/`Node` form an admin-configurable, arbitrary-depth, per-tenant tree (`/api/v1/node-types`, `/api/v1/nodes`, seeded per-zone from `hierarchy.yaml` via `backend/app/seed_hierarchy.py` at prestart — see [hierarchy.md](hierarchy.md) for the full setup walkthrough).
 
 `Device` (`/api/v1/devices`) is the bridge between a monitored address and a place in that hierarchy: a globally-unique `addr` plus an optional `node_id`. Don't confuse it with the unrelated `DeviceState`/`getState` concept on the live ping-status page (`frontend/src/pages/Devices.tsx`, `/state` route) — that's ephemeral Redis-backed status, this is a persisted assignment record. Most FK relationships use `ondelete="CASCADE"`, but `Device.node_id` deliberately uses `ondelete="SET NULL"`: deleting a Node orphans its devices' assignment rather than deleting the device rows, since they still represent real, monitored addresses. `POST /devices/` treats re-adding an orphaned `addr` (one whose Node was deleted) as a reassignment rather than a conflict, as long as the caller is actually assigning it to a node. `GET /devices/targets-export` renders every Device into pingsvc's flat target-file format (`addr,ancestor1;ancestor2;...;node_id`, root-first) since pingsvc itself has no hierarchy/device concept of its own — regenerating and restarting pingsvc after edits is a manual step, not a live hot-reload (see `scripts/regenerate-targets.sh`).
 
@@ -90,7 +96,7 @@ All routes live under `/api/v1` (configured via `API_V1_STR`). The `private` rou
 
 ### Database
 
-MySQL (not PostgreSQL — the project was migrated). Driver: `mysql+pymysql`. Config reads from `.env` via `pydantic-settings`. The `prestart` Docker service runs `alembic upgrade head` + `initial_data.py` before the backend starts.
+MySQL Driver: `mysql+pymysql`. Config reads from `.env` via `pydantic-settings`. The `prestart` Docker service runs `alembic upgrade head` + `initial_data.py` before the backend starts.
 
 ### pingsvc internals
 
@@ -113,9 +119,8 @@ Every feature follows a strict TDD loop — no exceptions:
 
 ## Tasks
 
-- Consider the current task and whether the information learned can be suggested in a Claude.md file whether at the root of project or inside relevant files
-
-- Create a md for plans under plan directory.
+- Make sure documents are up to date after each implementation and are consice and accurate based on the state of the project. 
+- Make sure the tests are up to date after each implementation based on the state of the project. 
 
 ## Feature Branch Workflow
 
