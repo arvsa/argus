@@ -151,102 +151,69 @@ To let the server verify a zone's signed snapshots (rather than leaving `signatu
 ## Continuous Deployment with GitHub Actions
 
 Two environments are already configured — `staging` and `production`. Each
-deploys via a **GitHub-hosted** runner: it builds the three service images,
-pushes them to a shared AWS ECR registry, then SSHes into that environment's
-own plain EC2 instance and runs `docker compose pull && up -d`. No
-self-hosted runner is installed anywhere — the only thing that has to exist
-ahead of time per environment is the EC2 box itself, provisioned once by
-hand. Add more environments by using these as a starting point.
+deploys via a **fully AWS-managed** pipeline, no SSH and no self-hosted
+runner anywhere: a GitHub-hosted runner builds the three service images,
+pushes them to a shared AWS ECR registry, then registers a new ECS task
+definition revision and updates that environment's ECS service
+(`aws ecs update-service`, via the `aws-actions/amazon-ecs-deploy-task-definition`
+action) — ECS itself handles pulling the new images onto the instance,
+health-checking the new task, and rolling traffic over. There is no box to
+reach into on a routine deploy.
 
-### Provision an environment's EC2 instance (one-time, per environment)
-
-1. Launch a plain EC2 instance (`t4g.small`/Graviton is enough for this
-   project's footprint; not attached to any ECS cluster or other
-   orchestrator — this is a bare box `docker compose` runs directly on).
-2. Attach an IAM **instance profile** granting ECR pull access (the managed
-   policy `AmazonEC2ContainerRegistryReadOnly` is sufficient) — this is how
-   the box authenticates to ECR later, no static AWS keys ever live on it.
-3. Security group: `22` (SSH — key-only auth, password auth disabled; note
-   that GitHub-hosted runners don't have stable source IPs, so this can't be
-   restricted to a fixed CIDR the way an office IP could be — key-only auth
-   plus `fail2ban` is the practical mitigation; [SSM Session
-   Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html)
-   is a more secure alternative worth graduating to later), `80`/`443` for
-   Traefik.
-4. Install Docker Engine + the Compose plugin. Create a `deploy` user in the
-   `docker` group, and add the CI deploy keypair's **public** key to
-   `~deploy/.ssh/authorized_keys` (the private half becomes the
-   `EC2_SSH_PRIVATE_KEY` secret below — generate a dedicated keypair per
-   environment or share one, your call).
-5. `mkdir -p /home/deploy/code/app`, `docker network create traefik-public`,
-   then bring up `compose.traefik.yml` exactly as in [Public
-   Traefik](#public-traefik) above.
-6. Bootstrap `/home/deploy/code/app/.env` with every app secret from the
-   table below (`chmod 600`) — this file is persistent and only ever
-   *edited in place* by the deploy step (it patches `TAG`/`DOCKER_IMAGE_*`
-   before each `docker compose pull`), never regenerated from CI.
+Both environments run as a single ECS task (EC2 launch type) with all 7
+services as sidecar containers — the same topology `compose.yml` runs
+locally. The full one-time provisioning runbook (ECS cluster, SSM
+Parameter Store secrets, IAM execution role, host bootstrap, initial
+service creation) lives in [ecs/README.md](ecs/README.md) — do that first;
+the summary below only covers what CI itself needs.
 
 ### One-time AWS + GitHub OIDC setup (shared across environments)
 
-1. Create three ECR repositories: `argus-backend`, `argus-frontend`,
-   `argus-pingsvc`.
-2. Create an IAM OIDC identity provider for
-   `token.actions.githubusercontent.com` (if this AWS account doesn't
-   already have one — [GitHub's
-   guide](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)),
-   then an IAM role trusted by it, scoped to this repository, with push
-   access to the three ECR repos above. This role's ARN is what
-   `AWS_DEPLOY_ROLE_ARN` (below) points at — GitHub Actions assumes it via
-   OIDC on every run, so no long-lived AWS access keys are ever stored as
-   repository secrets.
+Create an IAM OIDC identity provider for `token.actions.githubusercontent.com`
+(if this AWS account doesn't already have one — [GitHub's
+guide](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)),
+then an IAM role trusted by it, scoped to this repository, granting: push
+access to the three `argus-*` ECR repos, `ecs:RegisterTaskDefinition`,
+`ecs:UpdateService`, `ecs:DescribeServices`, `ecs:DescribeTaskDefinition`,
+and `iam:PassRole` on both environments' ECS execution roles. This role's
+ARN is what `AWS_DEPLOY_ROLE_ARN` (below) points at — GitHub Actions
+assumes it via OIDC on every run, so no long-lived AWS access keys are
+ever stored as repository secrets. Full detail in
+[ecs/README.md](ecs/README.md#4-iam-roles).
 
 ### Set Secrets and Variables
 
-On your repository, configure secrets and variables for the values below.
-Follow the official guides for [repository
+On your repository, configure the values below. Follow the official
+guides for [repository
 secrets](https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions#creating-secrets-for-a-repository)
 and [repository
-variables](https://docs.github.com/en/actions/learn-github-actions/variables#creating-configuration-variables-for-a-repository)
-(variables are for non-sensitive values, under the same Settings page's
-"Variables" tab).
+variables](https://docs.github.com/en/actions/learn-github-actions/variables#creating-configuration-variables-for-a-repository).
 
-**Variables:**
+**Variables:** `AWS_REGION`
 
-* `AWS_REGION`
-* `AWS_ACCOUNT_ID`
+**Secrets:** `AWS_DEPLOY_ROLE_ARN` — the OIDC role from the AWS setup above.
 
-**Secrets** — the current GitHub Actions workflows expect:
+That's the *entire* list the deploy workflows themselves read. Everything
+that used to be a per-environment GitHub secret in the SSH-based design
+(`POSTGRES_PASSWORD`, `SECRET_KEY`, `FIRST_SUPERUSER_PASSWORD`, `DOMAIN_*`,
+`STACK_NAME_*`, `SMTP_*`, `SENTRY_DSN`, `DOCKER_IMAGE_*`, ...) now lives
+either in **SSM Parameter Store** (the handful of real secrets — see
+[ecs/README.md §3](ecs/README.md#3-ssm-parameter-store-secrets-securestring-free-tier--no-secrets-manager-needed)) or
+directly in the checked-in, per-environment task definition JSON
+(everything non-sensitive: domain, environment name, CORS origins, admin
+email — see `ecs/staging-taskdef.json`/`ecs/production-taskdef.json`).
+Nothing app-specific flows through GitHub Actions on a routine deploy —
+only the freshly-built image tag does.
 
-* `AWS_DEPLOY_ROLE_ARN` — the OIDC role from the AWS setup above
-* `EC2_HOST_STAGING`, `EC2_HOST_PRODUCTION` — each environment's box
-* `EC2_SSH_USER` — the `deploy` user created during provisioning
-* `EC2_SSH_PRIVATE_KEY`
-* `DOMAIN_PRODUCTION`
-* `DOMAIN_STAGING`
-* `STACK_NAME_PRODUCTION`
-* `STACK_NAME_STAGING`
-* `EMAILS_FROM_EMAIL`
-* `FIRST_SUPERUSER`
-* `FIRST_SUPERUSER_PASSWORD`
-* `POSTGRES_PASSWORD`
-* `POSTGRES_DB`
-* `POSTGRES_PORT`
-* `SECRET_KEY`
-* `SENTRY_DSN`
-* `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`
-* `LATEST_CHANGES` — used by the separate `latest-changes` workflow, not deploy
-* `SMOKESHOW_AUTH_KEY` — used by the separate `smokeshow` coverage-publishing workflow, not deploy
+`LATEST_CHANGES` and `SMOKESHOW_AUTH_KEY` remain repository secrets used by
+the separate `latest-changes` and `smokeshow` workflows, unrelated to
+deploy.
 
-`DOCKER_IMAGE_BACKEND`/`DOCKER_IMAGE_PINGSVC`/`DOCKER_IMAGE_FRONTEND` are
-**no longer secrets** — CI computes the ECR image URIs itself from
-`AWS_ACCOUNT_ID`/`AWS_REGION` and writes them into the box's `.env` as part
-of each deploy.
-
-`deploy-staging.yml` and `deploy-production.yml` don't currently read any
-`ARGUS_*`/`S3_*` secrets — if you're deploying a zone or server that needs
-them, add them as additional repository secrets and bake them into the
-box's persistent `.env` during provisioning (see [Multi-zone
-configuration](#multi-zone-configuration)).
+Neither `deploy-staging.yml` nor `deploy-production.yml` currently deploys
+a zone/server needing `ARGUS_*`/`S3_*` config — if you turn that on, add
+those as additional SSM parameters and reference them in the relevant
+container's `secrets`/`environment` block in the task definition (see
+[Multi-zone configuration](#multi-zone-configuration)).
 
 ### Triggers
 

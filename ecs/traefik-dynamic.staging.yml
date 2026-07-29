@@ -1,0 +1,78 @@
+# Static Traefik file-provider config for the staging ECS task.
+#
+# Why a file provider instead of the docker-label provider compose.yml
+# uses: giving the Traefik container access to the host's docker.sock
+# inside an ECS-managed instance works, but couples Traefik's routing to
+# the Docker daemon rather than to ECS itself -- a static file avoids that
+# and is what ECS deployments conventionally use. Routing is otherwise a
+# 1:1 translation of compose.yml's traefik.* labels. Container names below
+# (backend, frontend) resolve via the task definition's classic Docker
+# `links` (see ecs/staging-taskdef.json) -- the same mechanism compose's
+# default network gives service names.
+#
+# Replace REPLACE_STAGING_DOMAIN and the admin-auth htpasswd hash before
+# copying this onto the instance as /opt/argus/traefik-dynamic/dynamic.yml
+# (see ecs/README.md step 4).
+
+http:
+  routers:
+    backend-http:
+      rule: "Host(`api.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: backend
+
+    backend-https:
+      rule: "Host(`api.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      service: backend
+
+    frontend-http:
+      rule: "Host(`dashboard.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: frontend
+
+    frontend-https:
+      rule: "Host(`dashboard.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      service: frontend
+
+    dashboard-http:
+      rule: "Host(`traefik.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: api@internal
+
+    dashboard-https:
+      rule: "Host(`traefik.REPLACE_STAGING_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      middlewares: ["admin-auth"]
+      service: api@internal
+
+  services:
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+
+  middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    admin-auth:
+      basicAuth:
+        # Generate with: openssl passwd -apr1 <password>
+        users:
+          - "admin:REPLACE_WITH_HTPASSWD_HASH"

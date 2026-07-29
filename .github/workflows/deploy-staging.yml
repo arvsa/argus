@@ -91,46 +91,58 @@ jobs:
           push: true
           tags: ${{ steps.login-ecr.outputs.registry }}/argus-pingsvc:${{ steps.vars.outputs.image_tag }}
 
+  # Fully AWS-managed: no SSH, no self-hosted runner, no box to reach into.
+  # Renders the freshly-pushed image tags into ecs/staging-taskdef.json (one
+  # pass per container that carries one of our images -- prestart and
+  # backend both run the argus-backend image), then registers the new task
+  # definition revision and updates the ECS service, waiting for it to
+  # stabilize.
   deploy:
     needs: [check-ci-status, build-and-push]
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ needs.build-and-push.outputs.image_tag }}
-      ECR_REGISTRY: ${{ needs.build-and-push.outputs.ecr_registry }}
-      STACK_NAME: ${{ secrets.STACK_NAME_STAGING }}
-      AWS_REGION: ${{ vars.AWS_REGION }}
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - name: Copy compose.yml to the box
-        uses: appleboy/scp-action@v1
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          host: ${{ secrets.EC2_HOST_STAGING }}
-          username: ${{ secrets.EC2_SSH_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          source: compose.yml
-          target: /home/deploy/code/app
-      - name: Deploy over SSH
-        uses: appleboy/ssh-action@v1
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Render backend image into prestart container
+        id: render-prestart
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          host: ${{ secrets.EC2_HOST_STAGING }}
-          username: ${{ secrets.EC2_SSH_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script: |
-            set -euo pipefail
-            # ECR tokens expire ~12h, so log in fresh on every deploy. The
-            # instance's own IAM instance profile supplies the credentials
-            # here -- no static AWS keys ever touch the box.
-            aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
-              docker login --username AWS --password-stdin "${{ env.ECR_REGISTRY }}"
-            cd /home/deploy/code/app
-            # Only the image tag/registry flow through CI on every deploy;
-            # the rest of .env is a persistent, one-time-bootstrapped secret
-            # file on the box (see deployment.md).
-            grep -q '^TAG=' .env && sed -i "s#^TAG=.*#TAG=${{ env.TAG }}#" .env || echo "TAG=${{ env.TAG }}" >> .env
-            grep -q '^DOCKER_IMAGE_BACKEND=' .env && sed -i "s#^DOCKER_IMAGE_BACKEND=.*#DOCKER_IMAGE_BACKEND=${{ env.ECR_REGISTRY }}/argus-backend#" .env || echo "DOCKER_IMAGE_BACKEND=${{ env.ECR_REGISTRY }}/argus-backend" >> .env
-            grep -q '^DOCKER_IMAGE_FRONTEND=' .env && sed -i "s#^DOCKER_IMAGE_FRONTEND=.*#DOCKER_IMAGE_FRONTEND=${{ env.ECR_REGISTRY }}/argus-frontend#" .env || echo "DOCKER_IMAGE_FRONTEND=${{ env.ECR_REGISTRY }}/argus-frontend" >> .env
-            grep -q '^DOCKER_IMAGE_PINGSVC=' .env && sed -i "s#^DOCKER_IMAGE_PINGSVC=.*#DOCKER_IMAGE_PINGSVC=${{ env.ECR_REGISTRY }}/argus-pingsvc#" .env || echo "DOCKER_IMAGE_PINGSVC=${{ env.ECR_REGISTRY }}/argus-pingsvc" >> .env
-            # --profile client: redis/pingsvc only start under this profile
-            # (see compose.yml); this preserves the existing single-stack
-            # deployment's behavior of always running the local ping pipeline.
-            docker compose -f compose.yml --project-name "${{ env.STACK_NAME }}" --profile client pull
-            docker compose -f compose.yml --project-name "${{ env.STACK_NAME }}" --profile client up -d
+          task-definition: ecs/staging-taskdef.json
+          container-name: prestart
+          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-backend:${{ needs.build-and-push.outputs.image_tag }}
+      - name: Render backend image into backend container
+        id: render-backend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-prestart.outputs.task-definition }}
+          container-name: backend
+          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-backend:${{ needs.build-and-push.outputs.image_tag }}
+      - name: Render frontend image
+        id: render-frontend
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-backend.outputs.task-definition }}
+          container-name: frontend
+          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-frontend:${{ needs.build-and-push.outputs.image_tag }}
+      - name: Render pingsvc image
+        id: render-pingsvc
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render-frontend.outputs.task-definition }}
+          container-name: pingsvc
+          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-pingsvc:${{ needs.build-and-push.outputs.image_tag }}
+      - name: Register task definition and update service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-pingsvc.outputs.task-definition }}
+          service: argus-client
+          cluster: argus-staging
+          wait-for-service-stability: true
