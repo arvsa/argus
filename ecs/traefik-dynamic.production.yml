@@ -1,0 +1,68 @@
+# Static Traefik file-provider config for the production ECS task.
+# See ecs/traefik-dynamic.staging.yml for the full rationale -- this is the
+# same config with the production domain. Replace REPLACE_PRODUCTION_DOMAIN
+# and the admin-auth htpasswd hash before copying this onto the instance as
+# /opt/argus/traefik-dynamic/dynamic.yml (see ecs/README.md step 4).
+
+http:
+  routers:
+    backend-http:
+      rule: "Host(`api.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: backend
+
+    backend-https:
+      rule: "Host(`api.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      service: backend
+
+    frontend-http:
+      rule: "Host(`dashboard.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: frontend
+
+    frontend-https:
+      rule: "Host(`dashboard.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      service: frontend
+
+    dashboard-http:
+      rule: "Host(`traefik.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["http"]
+      middlewares: ["https-redirect"]
+      service: api@internal
+
+    dashboard-https:
+      rule: "Host(`traefik.REPLACE_PRODUCTION_DOMAIN`)"
+      entryPoints: ["https"]
+      tls:
+        certResolver: le
+      middlewares: ["admin-auth"]
+      service: api@internal
+
+  services:
+    backend:
+      loadBalancer:
+        servers:
+          - url: "http://backend:8000"
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:80"
+
+  middlewares:
+    https-redirect:
+      redirectScheme:
+        scheme: https
+        permanent: true
+    admin-auth:
+      basicAuth:
+        # Generate with: openssl passwd -apr1 <password>
+        users:
+          - "admin:REPLACE_WITH_HTPASSWD_HASH"

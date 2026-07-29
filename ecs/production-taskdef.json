@@ -1,0 +1,490 @@
+{
+  "family": "argus-production",
+  "networkMode": "bridge",
+  "requiresCompatibilities": [
+    "EC2"
+  ],
+  "executionRoleArn": "arn:aws:iam::REPLACE_ACCOUNT_ID:role/argus-production-execution-role",
+  "volumes": [
+    {
+      "name": "postgres-data",
+      "host": {
+        "sourcePath": "/opt/argus/postgres-data"
+      }
+    },
+    {
+      "name": "redis-data",
+      "host": {
+        "sourcePath": "/opt/argus/redis-data"
+      }
+    },
+    {
+      "name": "argus-data",
+      "host": {
+        "sourcePath": "/opt/argus/argus-data"
+      }
+    },
+    {
+      "name": "pingsvc-targets",
+      "host": {
+        "sourcePath": "/opt/argus/targets.txt"
+      }
+    },
+    {
+      "name": "hierarchy-yaml",
+      "host": {
+        "sourcePath": "/opt/argus/hierarchy.yaml"
+      }
+    },
+    {
+      "name": "traefik-certs",
+      "host": {
+        "sourcePath": "/opt/argus/traefik-certs"
+      }
+    },
+    {
+      "name": "traefik-dynamic",
+      "host": {
+        "sourcePath": "/opt/argus/traefik-dynamic"
+      }
+    }
+  ],
+  "containerDefinitions": [
+    {
+      "name": "db",
+      "image": "postgres:16-alpine",
+      "essential": true,
+      "memoryReservation": 400,
+      "mountPoints": [
+        {
+          "sourceVolume": "postgres-data",
+          "containerPath": "/var/lib/postgresql/data"
+        }
+      ],
+      "environment": [
+        {
+          "name": "POSTGRES_DB",
+          "value": "argus"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/POSTGRES_PASSWORD"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "pg_isready -U postgres"
+        ],
+        "interval": 10,
+        "timeout": 5,
+        "retries": 5,
+        "startPeriod": 30
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "db",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "prestart",
+      "image": "<rendered-by-ci:argus-client:backend>",
+      "essential": false,
+      "memoryReservation": 128,
+      "command": [
+        "bash",
+        "scripts/prestart.sh"
+      ],
+      "links": [
+        "db"
+      ],
+      "dependsOn": [
+        {
+          "containerName": "db",
+          "condition": "HEALTHY"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "hierarchy-yaml",
+          "containerPath": "/app/backend/hierarchy.yaml",
+          "readOnly": true
+        }
+      ],
+      "environment": [
+        {
+          "name": "DOMAIN",
+          "value": "REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "FRONTEND_HOST",
+          "value": "https://dashboard.REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        },
+        {
+          "name": "BACKEND_CORS_ORIGINS",
+          "value": "https://dashboard.REPLACE_PRODUCTION_DOMAIN,https://api.REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "FIRST_SUPERUSER",
+          "value": "REPLACE_ADMIN_EMAIL"
+        },
+        {
+          "name": "POSTGRES_SERVER",
+          "value": "db"
+        },
+        {
+          "name": "POSTGRES_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "POSTGRES_DB",
+          "value": "argus"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "SECRET_KEY",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/SECRET_KEY"
+        },
+        {
+          "name": "FIRST_SUPERUSER_PASSWORD",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/FIRST_SUPERUSER_PASSWORD"
+        },
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/POSTGRES_PASSWORD"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "prestart",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "backend",
+      "image": "<rendered-by-ci:argus-client:backend>",
+      "essential": true,
+      "memoryReservation": 300,
+      "links": [
+        "db",
+        "redis"
+      ],
+      "dependsOn": [
+        {
+          "containerName": "db",
+          "condition": "HEALTHY"
+        },
+        {
+          "containerName": "prestart",
+          "condition": "SUCCESS"
+        }
+      ],
+      "environment": [
+        {
+          "name": "DOMAIN",
+          "value": "REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "FRONTEND_HOST",
+          "value": "https://dashboard.REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        },
+        {
+          "name": "BACKEND_CORS_ORIGINS",
+          "value": "https://dashboard.REPLACE_PRODUCTION_DOMAIN,https://api.REPLACE_PRODUCTION_DOMAIN"
+        },
+        {
+          "name": "FIRST_SUPERUSER",
+          "value": "REPLACE_ADMIN_EMAIL"
+        },
+        {
+          "name": "POSTGRES_SERVER",
+          "value": "db"
+        },
+        {
+          "name": "POSTGRES_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "POSTGRES_DB",
+          "value": "argus"
+        },
+        {
+          "name": "ROLE",
+          "value": "client"
+        },
+        {
+          "name": "S3_BUCKET",
+          "value": ""
+        },
+        {
+          "name": "S3_REGION",
+          "value": "REPLACE_REGION"
+        },
+        {
+          "name": "INGESTION_INTERVAL_SECONDS",
+          "value": "60"
+        },
+        {
+          "name": "STALENESS_THRESHOLD_SECONDS",
+          "value": "120"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "SECRET_KEY",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/SECRET_KEY"
+        },
+        {
+          "name": "FIRST_SUPERUSER_PASSWORD",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/FIRST_SUPERUSER_PASSWORD"
+        },
+        {
+          "name": "POSTGRES_PASSWORD",
+          "valueFrom": "arn:aws:ssm:REPLACE_REGION:REPLACE_ACCOUNT_ID:parameter/argus/production/POSTGRES_PASSWORD"
+        }
+      ],
+      "healthCheck": {
+        "command": [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8000/api/v1/utils/health-check/"
+        ],
+        "interval": 10,
+        "timeout": 5,
+        "retries": 5
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "backend",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "frontend",
+      "image": "<rendered-by-ci:argus-client:frontend>",
+      "essential": true,
+      "memoryReservation": 64,
+      "links": [
+        "backend"
+      ],
+      "dependsOn": [
+        {
+          "containerName": "backend",
+          "condition": "START"
+        }
+      ],
+      "environment": [
+        {
+          "name": "BACKEND_UPSTREAM",
+          "value": "http://backend:8000"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "frontend",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "redis",
+      "image": "redis:8-alpine",
+      "essential": true,
+      "memoryReservation": 64,
+      "mountPoints": [
+        {
+          "sourceVolume": "redis-data",
+          "containerPath": "/data"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "redis",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "pingsvc",
+      "image": "<rendered-by-ci:argus-client:pingsvc>",
+      "essential": true,
+      "memory": 512,
+      "links": [
+        "redis"
+      ],
+      "dependsOn": [
+        {
+          "containerName": "redis",
+          "condition": "START"
+        }
+      ],
+      "portMappings": [
+        {
+          "containerPort": 9090,
+          "hostPort": 9090,
+          "protocol": "tcp"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "pingsvc-targets",
+          "containerPath": "/etc/pingsvc/targets.txt"
+        },
+        {
+          "sourceVolume": "argus-data",
+          "containerPath": "/var/lib/argus"
+        }
+      ],
+      "environment": [
+        {
+          "name": "REDIS_URL",
+          "value": "redis:6379"
+        },
+        {
+          "name": "PINGSVC_CONCURRENCY",
+          "value": "200"
+        },
+        {
+          "name": "PINGSVC_GLOBAL_QPS",
+          "value": "500"
+        },
+        {
+          "name": "PINGSVC_PER_HOST_TIMEOUT",
+          "value": "2s"
+        },
+        {
+          "name": "ARGUS_ROLE",
+          "value": "pingsvc"
+        },
+        {
+          "name": "ARGUS_ZONE_ID",
+          "value": "production"
+        },
+        {
+          "name": "ARGUS_TENANT_ID",
+          "value": "REPLACE_TENANT_ID"
+        },
+        {
+          "name": "ARGUS_SPOOL_DIR",
+          "value": "/var/lib/argus/pending"
+        },
+        {
+          "name": "ARGUS_TARGET_SYNC_INTERVAL_SECONDS",
+          "value": "30"
+        }
+      ],
+      "linuxParameters": {
+        "capabilities": {
+          "add": [
+            "NET_RAW",
+            "NET_ADMIN"
+          ]
+        }
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "pingsvc",
+          "awslogs-create-group": "true"
+        }
+      }
+    },
+    {
+      "name": "traefik",
+      "image": "traefik:v3.7",
+      "essential": true,
+      "memoryReservation": 64,
+      "links": [
+        "backend",
+        "frontend"
+      ],
+      "dependsOn": [
+        {
+          "containerName": "backend",
+          "condition": "START"
+        },
+        {
+          "containerName": "frontend",
+          "condition": "START"
+        }
+      ],
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "hostPort": 80,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 443,
+          "hostPort": 443,
+          "protocol": "tcp"
+        }
+      ],
+      "mountPoints": [
+        {
+          "sourceVolume": "traefik-certs",
+          "containerPath": "/certificates"
+        },
+        {
+          "sourceVolume": "traefik-dynamic",
+          "containerPath": "/etc/traefik/dynamic",
+          "readOnly": true
+        }
+      ],
+      "command": [
+        "--providers.file.directory=/etc/traefik/dynamic",
+        "--providers.file.watch=true",
+        "--entrypoints.http.address=:80",
+        "--entrypoints.https.address=:443",
+        "--certificatesresolvers.le.acme.email=REPLACE_ADMIN_EMAIL",
+        "--certificatesresolvers.le.acme.storage=/certificates/acme.json",
+        "--certificatesresolvers.le.acme.tlschallenge=true",
+        "--accesslog",
+        "--log",
+        "--api"
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/argus-production",
+          "awslogs-region": "REPLACE_REGION",
+          "awslogs-stream-prefix": "traefik",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}
