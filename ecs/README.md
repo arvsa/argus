@@ -28,27 +28,41 @@ named `argus-<env>`.
 
 ## 2. ECR repos + push images (arm64 — the cluster's instances are Graviton)
 
-CI does this on every deploy (see `.github/workflows/deploy-staging.yml` /
-`deploy-production.yml`) — this is only for the *first* image, since an ECS
-service can't be created against a task definition whose images don't exist
-yet:
+Two repos, not one per service: `argus-client` holds backend/frontend/pingsvc
+images as separate tags (`backend-<sha>`, `frontend-<sha>`, `pingsvc-<sha>`)
+since a full zone needs all three; `argus-server` holds backend/frontend
+tags only, since the central dashboard never runs pingsvc (see CLAUDE.md).
+backend/frontend are role-agnostic at runtime (`ROLE`/`S3_BUCKET` pick
+client vs server), so the same build lands in both repos. CI builds and
+pushes on every deploy via `docker compose build` (see
+`.github/workflows/deploy-staging.yml` / `deploy-production.yml`) — this
+section is only for the *first* image, since an ECS service can't be
+created against a task definition whose images don't exist yet:
 
 ```bash
-for repo in argus-backend argus-frontend argus-pingsvc; do
+for repo in argus-client argus-server; do
   aws ecr create-repository --repository-name "$repo" --region REPLACE_REGION
 done
 
 aws ecr get-login-password --region REPLACE_REGION | \
   docker login --username AWS --password-stdin REPLACE_ACCOUNT_ID.dkr.ecr.REPLACE_REGION.amazonaws.com
 
-docker buildx build --platform linux/arm64 -f backend/Dockerfile \
-  -t REPLACE_ACCOUNT_ID.dkr.ecr.REPLACE_REGION.amazonaws.com/argus-backend:bootstrap --push .
+REGISTRY=REPLACE_ACCOUNT_ID.dkr.ecr.REPLACE_REGION.amazonaws.com
 
-docker buildx build --platform linux/arm64 -f frontend/Dockerfile --target prod \
-  -t REPLACE_ACCOUNT_ID.dkr.ecr.REPLACE_REGION.amazonaws.com/argus-frontend:bootstrap --push .
+# Same builds compose.yml uses locally -- see compose.yml's backend/
+# frontend/pingsvc service definitions for the exact context/file/target.
+docker buildx build --platform linux/arm64 -f backend/Dockerfile -t argus-backend:bootstrap --load .
+docker buildx build --platform linux/arm64 -f frontend/Dockerfile --target prod -t argus-frontend:bootstrap --load .
+docker buildx build --platform linux/arm64 -f pingsvc/Dockerfile -t argus-pingsvc:bootstrap --load ./pingsvc
 
-docker buildx build --platform linux/arm64 -f pingsvc/Dockerfile \
-  -t REPLACE_ACCOUNT_ID.dkr.ecr.REPLACE_REGION.amazonaws.com/argus-pingsvc:bootstrap --push ./pingsvc
+for svc in backend frontend; do
+  docker tag "argus-$svc:bootstrap" "$REGISTRY/argus-client:$svc-bootstrap"
+  docker tag "argus-$svc:bootstrap" "$REGISTRY/argus-server:$svc-bootstrap"
+  docker push "$REGISTRY/argus-client:$svc-bootstrap"
+  docker push "$REGISTRY/argus-server:$svc-bootstrap"
+done
+docker tag argus-pingsvc:bootstrap "$REGISTRY/argus-client:pingsvc-bootstrap"
+docker push "$REGISTRY/argus-client:pingsvc-bootstrap"
 ```
 
 (ECR repos are shared across environments — do this once, not per environment.)
@@ -115,11 +129,11 @@ as GitHub secrets):
    have one ([GitHub's
    guide](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services)).
 2. Create a role trusted by that provider, scoped to this repository, with:
-   push access to the three `argus-*` ECR repos, `ecs:RegisterTaskDefinition`,
-   `ecs:UpdateService`, `ecs:DescribeServices`, `ecs:DescribeTaskDefinition`,
-   and `iam:PassRole` on both environments' execution roles (needed because
-   `RegisterTaskDefinition` requires permission to pass the execution role
-   to ECS).
+   push access to the `argus-client` and `argus-server` ECR repos,
+   `ecs:RegisterTaskDefinition`, `ecs:UpdateService`, `ecs:DescribeServices`,
+   `ecs:DescribeTaskDefinition`, and `iam:PassRole` on both environments'
+   execution roles (needed because `RegisterTaskDefinition` requires
+   permission to pass the execution role to ECS).
 
 ## 5. Host paths + static Traefik config, via SSM Session Manager
 

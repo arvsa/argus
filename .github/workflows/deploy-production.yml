@@ -8,7 +8,15 @@ on:
 jobs:
   # Builds on a native arm64 GitHub-hosted runner (no QEMU) since the target
   # EC2 instance is Graviton (t4g.*, matching the region/arch convention
-  # already used for ECR elsewhere in this project's history).
+  # already used for ECR elsewhere in this project's history). Builds via
+  # `docker compose build` (reusing compose.yml's own Dockerfile/context/
+  # target definitions instead of duplicating them here) and pushes into
+  # two ECR repos as separate tags rather than one repo per service:
+  # argus-client holds backend+frontend+pingsvc (a full zone), argus-server
+  # holds backend+frontend only (the central dashboard never runs pingsvc
+  # -- see CLAUDE.md). backend/frontend are role-agnostic at runtime (ROLE
+  # env var / S3_BUCKET pick client vs server -- see CLAUDE.md), so the
+  # same build gets pushed to both repos.
   build-and-push:
     runs-on: ubuntu-24.04-arm
     permissions:
@@ -16,7 +24,8 @@ jobs:
       contents: read
     outputs:
       image_tag: ${{ steps.vars.outputs.image_tag }}
-      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+      client_repo: ${{ steps.repos.outputs.client_repo }}
+      server_repo: ${{ steps.repos.outputs.server_repo }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -31,35 +40,57 @@ jobs:
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Build and push backend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: backend/Dockerfile
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/argus-backend:${{ steps.vars.outputs.image_tag }}
-      - name: Build and push frontend
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: frontend/Dockerfile
-          target: prod
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/argus-frontend:${{ steps.vars.outputs.image_tag }}
-      - name: Build and push pingsvc
-        uses: docker/build-push-action@v6
-        with:
-          context: ./pingsvc
-          file: pingsvc/Dockerfile
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/argus-pingsvc:${{ steps.vars.outputs.image_tag }}
+      - name: Compute repo URIs
+        id: repos
+        run: |
+          echo "client_repo=${{ steps.login-ecr.outputs.registry }}/argus-client" >> "$GITHUB_OUTPUT"
+          echo "server_repo=${{ steps.login-ecr.outputs.registry }}/argus-server" >> "$GITHUB_OUTPUT"
+      - name: Write build-time .env
+        # docker compose resolves every ${VAR?err} in the whole file up
+        # front, even for `build` -- these placeholders never reach a
+        # running container (real config lives in SSM/the task definition,
+        # see ecs/README.md), they only need to exist to satisfy compose's
+        # interpolation checks during the build.
+        run: |
+          cat > .env <<'EOF'
+          FRONTEND_HOST=http://localhost
+          STACK_NAME=argus-build
+          SECRET_KEY=build-only-placeholder
+          FIRST_SUPERUSER=build@example.com
+          FIRST_SUPERUSER_PASSWORD=build-only-placeholder
+          POSTGRES_PASSWORD=build-only-placeholder
+          POSTGRES_DB=argus
+          DOCKER_IMAGE_BACKEND=argus-backend
+          DOCKER_IMAGE_FRONTEND=argus-frontend
+          DOCKER_IMAGE_PINGSVC=argus-pingsvc
+          FRONTEND_TARGET=prod
+          EOF
+      - name: Build images
+        run: docker compose -f compose.yml --profile client build backend frontend pingsvc
+      - name: Tag and push to argus-client and argus-server
+        env:
+          TAG: ${{ steps.vars.outputs.image_tag }}
+          CLIENT_REPO: ${{ steps.repos.outputs.client_repo }}
+          SERVER_REPO: ${{ steps.repos.outputs.server_repo }}
+        run: |
+          set -euo pipefail
+          docker tag argus-backend:latest "$CLIENT_REPO:backend-$TAG"
+          docker tag argus-backend:latest "$SERVER_REPO:backend-$TAG"
+          docker tag argus-frontend:latest "$CLIENT_REPO:frontend-$TAG"
+          docker tag argus-frontend:latest "$SERVER_REPO:frontend-$TAG"
+          docker tag argus-pingsvc:latest "$CLIENT_REPO:pingsvc-$TAG"
+
+          docker push "$CLIENT_REPO:backend-$TAG"
+          docker push "$SERVER_REPO:backend-$TAG"
+          docker push "$CLIENT_REPO:frontend-$TAG"
+          docker push "$SERVER_REPO:frontend-$TAG"
+          docker push "$CLIENT_REPO:pingsvc-$TAG"
 
   # Fully AWS-managed: no SSH, no self-hosted runner, no box to reach into.
   # Renders the freshly-pushed image tags into ecs/production-taskdef.json
-  # (one pass per container that carries one of our images -- prestart and
-  # backend both run the argus-backend image), then registers the new task
-  # definition revision and updates the ECS service, waiting for it to
-  # stabilize.
+  # (production is a client-role deployment, so every container pulls from
+  # argus-client), then registers the new task definition revision and
+  # updates the ECS service, waiting for it to stabilize.
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -80,28 +111,28 @@ jobs:
         with:
           task-definition: ecs/production-taskdef.json
           container-name: prestart
-          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-backend:${{ needs.build-and-push.outputs.image_tag }}
+          image: ${{ needs.build-and-push.outputs.client_repo }}:backend-${{ needs.build-and-push.outputs.image_tag }}
       - name: Render backend image into backend container
         id: render-backend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ steps.render-prestart.outputs.task-definition }}
           container-name: backend
-          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-backend:${{ needs.build-and-push.outputs.image_tag }}
+          image: ${{ needs.build-and-push.outputs.client_repo }}:backend-${{ needs.build-and-push.outputs.image_tag }}
       - name: Render frontend image
         id: render-frontend
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ steps.render-backend.outputs.task-definition }}
           container-name: frontend
-          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-frontend:${{ needs.build-and-push.outputs.image_tag }}
+          image: ${{ needs.build-and-push.outputs.client_repo }}:frontend-${{ needs.build-and-push.outputs.image_tag }}
       - name: Render pingsvc image
         id: render-pingsvc
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ${{ steps.render-frontend.outputs.task-definition }}
           container-name: pingsvc
-          image: ${{ needs.build-and-push.outputs.ecr_registry }}/argus-pingsvc:${{ needs.build-and-push.outputs.image_tag }}
+          image: ${{ needs.build-and-push.outputs.client_repo }}:pingsvc-${{ needs.build-and-push.outputs.image_tag }}
       - name: Register task definition and update service
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:

@@ -46,7 +46,7 @@
     },
     {
       "name": "prestart",
-      "image": "<rendered-by-ci:argus-backend>",
+      "image": "<rendered-by-ci:argus-client:backend>",
       "essential": false,
       "memoryReservation": 128,
       "command": ["bash", "scripts/prestart.sh"],
@@ -84,7 +84,7 @@
     },
     {
       "name": "backend",
-      "image": "<rendered-by-ci:argus-backend>",
+      "image": "<rendered-by-ci:argus-client:backend>",
       "essential": true,
       "memoryReservation": 300,
       "links": ["db", "redis"],
@@ -130,7 +130,7 @@
     },
     {
       "name": "frontend",
-      "image": "<rendered-by-ci:argus-frontend>",
+      "image": "<rendered-by-ci:argus-client:frontend>",
       "essential": true,
       "memoryReservation": 64,
       "links": ["backend"],
@@ -170,7 +170,7 @@
     },
     {
       "name": "pingsvc",
-      "image": "<rendered-by-ci:argus-pingsvc>",
+      "image": "<rendered-by-ci:argus-client:pingsvc>",
       "essential": true,
       "memory": 512,
       "links": ["redis"],
