@@ -76,12 +76,11 @@ if [ "$REDIS_REPLY" != "PONG" ]; then
 fi
 echo "  redis: OK (PONG)"
 
-# 3. MySQL admin ping
+# 3. Postgres admin ping
 echo "  checking db..."
 if ! docker compose exec -T db \
-        mysqladmin ping -h localhost -u root -p"${MYSQL_ROOT_PASSWORD:-root}" \
-        --silent 2>/dev/null; then
-    echo "FAIL: mysqladmin ping failed"
+        pg_isready -U postgres 2>/dev/null; then
+    echo "FAIL: pg_isready failed"
     docker compose logs --tail=20 db
     exit 1
 fi

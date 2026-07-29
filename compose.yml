@@ -1,23 +1,22 @@
 services:
 
   db:
-    image: mysql
+    image: postgres:16-alpine
     restart: always
     healthcheck:
-      test: ['CMD', 'mysqladmin', 'ping', '-h', 'localhost', '-u', 'root', '-p${MYSQL_ROOT_PASSWORD}']
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 10s
       retries: 5
       start_period: 30s
       timeout: 10s
     volumes:
-      - app-db-data:/var/lib/mysql
-      # - ./db/init/mysql:/docker-entrypoint-initdb.d
+      - app-db-data:/var/lib/postgresql/data
+      # - ./db/init/postgres:/docker-entrypoint-initdb.d
     env_file:
       - .env
     environment:
-      # - PGDATA=/var/lib/postgresql/data/pgdata
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
-      - MYSQL_DATABASE=${MYSQL_DATABASE?Variable not set}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
+      - POSTGRES_DB=${POSTGRES_DB?Variable not set}
 
   prestart:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
@@ -46,10 +45,10 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
       - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - MYSQL_SERVER=db
-      - MYSQL_PORT=${MYSQL_PORT}
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
     volumes:
       # Optional -- cp hierarchy.yaml.example hierarchy.yaml to use it (see
@@ -91,10 +90,10 @@ services:
       # - SMTP_USER=${SMTP_USER}
       # - SMTP_PASSWORD=${SMTP_PASSWORD}
       # - EMAILS_FROM_EMAIL=${EMAILS_FROM_EMAIL}
-      - MYSQL_SERVER=db
-      - MYSQL_PORT=${MYSQL_PORT}
-      - MYSQL_DATABASE=${MYSQL_DATABASE}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD?Variable not set}
+      - POSTGRES_SERVER=db
+      - POSTGRES_PORT=${POSTGRES_PORT}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD?Variable not set}
       - SENTRY_DSN=${SENTRY_DSN}
       # ROLE=client (default) is a plain zone backend; ROLE=server is the
       # central argus-server (no local ping pipeline, ingestion opt-in via
@@ -110,7 +109,7 @@ services:
       - INGESTION_INTERVAL_SECONDS=${INGESTION_INTERVAL_SECONDS:-60}
       - STALENESS_THRESHOLD_SECONDS=${STALENESS_THRESHOLD_SECONDS:-120}
       # pingsvc target hot-reload -- must match ARGUS_PINGSVC_SYNC_TOKEN
-      # below (same secret-sharing pattern as MYSQL_ROOT_PASSWORD)
+      # below (same secret-sharing pattern as POSTGRES_PASSWORD)
       - PINGSVC_SYNC_TOKEN=${PINGSVC_SYNC_TOKEN:-}
 
     healthcheck:

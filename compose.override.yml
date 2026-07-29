@@ -47,7 +47,7 @@ services:
   db:
     restart: "no"
     ports:
-      - "3306:3306"
+      - "5432:5432"
 
   redis:
     restart: "no"

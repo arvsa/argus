@@ -335,9 +335,9 @@ def discovered_device_is_stale(
     the stale ones.
 
     get_stale_zones compares in the SQL query itself, so the DB driver
-    handles it; here it's a plain Python comparison, and MySQL round-trips
-    a DATETIME column as timezone-naive even though get_datetime_utc()
-    wrote an aware UTC value -- normalize before comparing."""
+    handles it; here it's a plain Python comparison, so normalize
+    defensively in case a naive value comes back even though
+    get_datetime_utc() wrote an aware UTC value."""
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=threshold_seconds)
     last_seen_at = discovered.last_seen_at
     if last_seen_at.tzinfo is None:

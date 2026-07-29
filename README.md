@@ -30,11 +30,11 @@ flowchart TB
 
     subgraph Server["argus-server — central"]
         SBackend["backend (FastAPI)<br/>ingestion_task"]
-        SMySQL[("MySQL<br/>ClientSnapshot / ZoneSummary")]
+        SPostgres[("PostgreSQL<br/>ClientSnapshot / ZoneSummary")]
         API(["GET /api/v1/zones/summary"])
 
-        SBackend -- "verify signature<br/>& upsert" --> SMySQL
-        SMySQL --> API
+        SBackend -- "verify signature<br/>& upsert" --> SPostgres
+        SPostgres --> API
     end
 
     S3 -- "poll" --> SBackend
@@ -48,7 +48,7 @@ A single-zone deployment is just an `argus-client` with nothing configured to pu
 |---|---|
 | **backend** | FastAPI REST API + WebSocket server (Python). Runs as either an `argus-client`'s local API or the central `argus-server`'s ingestion + dashboard API, depending on whether `S3_BUCKET` is configured. |
 | **pingsvc** | Concurrent ICMP ping daemon (Go). Its `-role` flag (`pingsvc` / `exporter` / `both`) determines whether it just pings, just exports/pushes snapshots, or both — `both` is what makes a deployment an `argus-client`. |
-| **db** | MySQL 8 database |
+| **db** | PostgreSQL 16 database |
 | **redis** | Pub/sub message bus between pingsvc and backend, local to each zone |
 | **frontend** | React + Vite + TypeScript operator dashboard. Runs in Docker (dev target, hot reload) or locally via `npm` -- see Quick Start below. |
 
@@ -76,7 +76,7 @@ Local URLs once running:
 - API docs (Swagger): http://localhost:8000/docs
 - pingsvc Prometheus metrics: http://localhost:9090/metrics (client mode only)
 
-The first run may take a minute while the backend waits for MySQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`).
+The first run may take a minute while the backend waits for PostgreSQL and runs migrations. Log in with `FIRST_SUPERUSER`/`FIRST_SUPERUSER_PASSWORD` from your `.env` (defaults from `.env.example`: `admin@example.com` / `changethis`).
 
 `client` mode brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
 
@@ -113,9 +113,9 @@ All config is in `.env` (root); `.env.example` documents every variable, includi
 
 | Variable | Description |
 |---|---|
-| `MYSQL_SERVER` | MySQL host (default: `db`) |
-| `MYSQL_ROOT_PASSWORD` | MySQL root password |
-| `MYSQL_DATABASE` | Database name (default: `argus`) |
+| `POSTGRES_SERVER` | PostgreSQL host (default: `db`) |
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `POSTGRES_DB` | Database name (default: `argus`) |
 | `REDIS_URL` | Redis connection URL |
 | `SECRET_KEY` | JWT signing key — change before deploying |
 | `FIRST_SUPERUSER` | Admin email created on first startup |
@@ -172,7 +172,7 @@ Push to `main` → **Deploy to Staging** (gated on both test workflows passing f
 ## Connecting to Running Services
 
 ```bash
-bash scripts/db-connect.sh       # MySQL shell inside the db container
+bash scripts/db-connect.sh       # PostgreSQL shell inside the db container
 bash scripts/backend-connect.sh  # bash shell inside the backend container
 bash scripts/redis-connect.sh    # redis-cli inside the redis container
 bash scripts/pingsvc-connect.sh  # sh inside the pingsvc container
