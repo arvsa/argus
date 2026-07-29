@@ -650,7 +650,9 @@ def test_bulk_import_skips_already_assigned_elsewhere_addr(client: TestClient) -
     assert results[0]["outcome"] == "skipped_duplicate"
 
 
-def test_bulk_import_reassigns_orphaned_addr_when_node_given(client: TestClient) -> None:
+def test_bulk_import_reassigns_orphaned_addr_when_node_given(
+    client: TestClient,
+) -> None:
     headers = _su(client)
     tenant_id = random_lower_string()
     root_type = _root_type(client, headers, tenant_id)

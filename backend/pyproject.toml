@@ -19,7 +19,6 @@ dependencies = [
     "sentry-sdk[fastapi]<2.0.0,>=1.40.6",
     "pyjwt<3.0.0,>=2.8.0",
     "pwdlib[argon2,bcrypt]>=0.3.0",
-    "pymysql >= 1.0",
     "cryptography>=42.0.0",
     "redis>=7.2.0",
     "pyyaml>=6.0.3",

@@ -203,10 +203,10 @@ def is_zone_stale(last_pulled_at: datetime | None, *, threshold_seconds: int) ->
     row's last_pulled_at is always set by the time this is called."""
     if last_pulled_at is None:
         return True
-    # MySQL round-trips DateTime(timezone=True) columns as naive datetimes
-    # (it has no native tz-aware type) even though the app always writes
-    # datetime.now(timezone.utc) -- treat a naive value read back from the
-    # DB as UTC rather than crashing on tz-aware - tz-naive subtraction.
+    # Defensive: treat a naive value read back from the DB as UTC rather
+    # than crashing on tz-aware - tz-naive subtraction, even though the app
+    # always writes datetime.now(timezone.utc) into a DateTime(timezone=True)
+    # column.
     if last_pulled_at.tzinfo is None:
         last_pulled_at = last_pulled_at.replace(tzinfo=timezone.utc)
     age_seconds = (datetime.now(timezone.utc) - last_pulled_at).total_seconds()

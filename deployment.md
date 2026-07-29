@@ -76,7 +76,7 @@ Copy the content and use that as password / secret key. And run that again to ge
 ```bash
 export ENVIRONMENT=production                 # local (dev default) / staging / production
 export DOMAIN=argus.example.com                # local default: localhost
-export MYSQL_ROOT_PASSWORD="<generated>"       # never leave as "changethis"
+export POSTGRES_PASSWORD="<generated>"         # never leave as "changethis"
 export SECRET_KEY="<generated>"                # signs auth tokens — use the command above
 export FIRST_SUPERUSER_PASSWORD="<generated>"
 export BACKEND_CORS_ORIGINS="https://dashboard.${DOMAIN?Variable not set},https://api.${DOMAIN?Variable not set}"
@@ -92,9 +92,9 @@ You can set several other environment variables:
 * `SMTP_USER`: The SMTP server user to send emails.
 * `SMTP_PASSWORD`: The SMTP server password to send emails.
 * `EMAILS_FROM_EMAIL`: The email account to send emails from.
-* `MYSQL_SERVER`: The hostname of the MySQL server. You can leave the default of `db`, provided by the same Docker Compose. You normally wouldn't need to change this unless you are using a third-party provider.
-* `MYSQL_PORT`: The port of the MySQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
-* `MYSQL_DATABASE`: The database name to use for this application. You can leave the default of `argus`.
+* `POSTGRES_SERVER`: The hostname of the PostgreSQL server. You can leave the default of `db`, provided by the same Docker Compose. You normally wouldn't need to change this unless you are using a third-party provider.
+* `POSTGRES_PORT`: The port of the PostgreSQL server. You can leave the default. You normally wouldn't need to change this unless you are using a third-party provider.
+* `POSTGRES_DB`: The database name to use for this application. You can leave the default of `argus`.
 * `SENTRY_DSN`: The DSN for Sentry, if you are using it.
 * `DOCKER_IMAGE_BACKEND` / `DOCKER_IMAGE_PINGSVC` / `DOCKER_IMAGE_FRONTEND`: image names used to build/tag the backend, pingsvc, and frontend images.
 * `FRONTEND_TARGET` / `FRONTEND_PORT`: which stage of `frontend/Dockerfile` to build and the port Traefik routes to. The defaults (`dev`/`5173`) run the hot-reload Vite server — **production deploys must set `FRONTEND_TARGET=prod` and `FRONTEND_PORT=80`** to serve the static nginx build instead.
@@ -188,9 +188,9 @@ The current GitHub Actions workflows expect these secrets:
 * `EMAILS_FROM_EMAIL`
 * `FIRST_SUPERUSER`
 * `FIRST_SUPERUSER_PASSWORD`
-* `MYSQL_ROOT_PASSWORD`
-* `MYSQL_DATABASE`
-* `MYSQL_PORT`
+* `POSTGRES_PASSWORD`
+* `POSTGRES_DB`
+* `POSTGRES_PORT`
 * `SECRET_KEY`
 * `SENTRY_DSN`
 * `SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`

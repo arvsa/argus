@@ -281,10 +281,10 @@ def test_get_zone_signing_key_returns_none_when_unregistered(db: Session) -> Non
 
 def test_client_snapshot_has_composite_zone_ts_index(db: Session) -> None:
     """get_latest_client_snapshot orders by snapshot_ts within one zone.
-    Without a composite (tenant_id, zone_id, snapshot_ts) index MySQL
-    filesorts entire rows -- including the multi-hundred-KB JSON columns --
-    and dies with error 1038 (out of sort memory) on realistically sized
-    snapshots, 500ing the zone detail endpoint."""
+    Without a composite (tenant_id, zone_id, snapshot_ts) index the DB must
+    sort entire rows -- including the multi-hundred-KB JSON columns --
+    which risks 500ing the zone detail endpoint on realistically sized
+    snapshots."""
     from sqlalchemy import inspect
 
     indexes = inspect(db.get_bind()).get_indexes("client_snapshot")

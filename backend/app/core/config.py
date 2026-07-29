@@ -7,7 +7,7 @@ from pydantic import (
     BeforeValidator,
     EmailStr,
     HttpUrl,
-    MySQLDsn,  # Changed from PostgresDsn
+    PostgresDsn,
     computed_field,
     model_validator,
 )
@@ -49,11 +49,11 @@ class Settings(BaseSettings):
     PROJECT_NAME: str
     SENTRY_DSN: HttpUrl | None = None
 
-    MYSQL_SERVER: str
-    MYSQL_PORT: int = 3306
-    MYSQL_USER: str = "root"
-    MYSQL_ROOT_PASSWORD: str = ""
-    MYSQL_DATABASE: str = ""
+    POSTGRES_SERVER: str
+    POSTGRES_PORT: int = 5432
+    POSTGRES_USER: str = "postgres"
+    POSTGRES_PASSWORD: str = ""
+    POSTGRES_DB: str = ""
 
     REDIS_URL: str = "redis://redis:6379/0"
     REDIS_PORT: int = 6379
@@ -62,14 +62,14 @@ class Settings(BaseSettings):
 
     @computed_field  # type: ignore[prop-decorator]
     @property
-    def SQLALCHEMY_DATABASE_URI(self) -> MySQLDsn:  # Changed return type
-        return MySQLDsn.build(
-            scheme="mysql+pymysql",  # Changed scheme
-            username=self.MYSQL_USER,
-            password=self.MYSQL_ROOT_PASSWORD,
-            host=self.MYSQL_SERVER,
-            port=self.MYSQL_PORT,
-            path=self.MYSQL_DATABASE,
+    def SQLALCHEMY_DATABASE_URI(self) -> PostgresDsn:
+        return PostgresDsn.build(
+            scheme="postgresql+psycopg",
+            username=self.POSTGRES_USER,
+            password=self.POSTGRES_PASSWORD,
+            host=self.POSTGRES_SERVER,
+            port=self.POSTGRES_PORT,
+            path=self.POSTGRES_DB,
         )
 
     SMTP_TLS: bool = True
@@ -167,9 +167,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_non_default_secrets(self) -> Self:
         self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
-        self._check_default_secret(
-            "MYSQL_ROOT_PASSWORD", self.MYSQL_ROOT_PASSWORD
-        )  # Changed
+        self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
         self._check_default_secret(
             "FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD
         )

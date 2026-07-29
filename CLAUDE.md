@@ -11,7 +11,7 @@ You are a senior software engineer working with me on this project. We are respo
 A network device monitoring system. It pings thousands of devices, tracks their up/down state in Redis, and streams live status updates to clients over WebSockets. Deployable as a single stack, or split across independent **zones** (e.g. one per building/site) that each run their own local monitoring and push signed, aggregated snapshots to a central `argus-server` dashboard. See [plan/dynamic-hierarchy-multi-zone-architecture.md](plan/dynamic-hierarchy-multi-zone-architecture.md) and its [implementation summary](plan/dynamic-hierarchy-multi-zone-implementation-summary.md) for the design and what's shipped.
 
 Services:
-- **`backend/`** — FastAPI (Python) REST API + WebSocket server, MySQL DB via SQLModel/Alembic. Doubles as either a zone's local API or the central `argus-server` ingestion/dashboard API depending on whether `S3_BUCKET` is configured.
+- **`backend/`** — FastAPI (Python) REST API + WebSocket server, PostgreSQL DB via SQLModel/Alembic. Doubles as either a zone's local API or the central `argus-server` ingestion/dashboard API depending on whether `S3_BUCKET` is configured.
 - **`pingsvc/`** — Go service that concurrently ICMPs devices and publishes state changes to Redis. `-role` (`pingsvc` / `exporter` / `both`) controls whether it pings, exports signed snapshots to object storage, or both (`both` = a full `argus-client`).
 - **`frontend/`** — React + Vite + TypeScript dashboard
 - **`redis`** — Shared message bus between pingsvc and backend, local to each zone
@@ -70,7 +70,7 @@ Local spool dir → Ed25519-signed manifest → push to S3-compatible object sto
      ↓ key layout: {tenant_id}/{zone_id}/YYYY/MM/DD/HH/<ts>.json.gz(+.manifest.json)
 argus-server backend ingestion_task (startup lifespan, polls the bucket)
      ↓ verifies signature against the *registered* ZoneSigningKey (never the manifest's embedded key)
-ClientSnapshot / ZoneSummary (MySQL) → GET /api/v1/zones/summary (includes is_stale)
+ClientSnapshot / ZoneSummary (PostgreSQL) → GET /api/v1/zones/summary (includes is_stale)
 ```
 
 `ARGUS_ROLE`/`-role` on pingsvc (`pingsvc` / `exporter` / `both`) gates which half of this runs in a given process; a plain single-stack deployment just runs `-role=pingsvc` (the default) with nothing configured to export.
@@ -96,7 +96,7 @@ All routes live under `/api/v1` (configured via `API_V1_STR`). The `private` rou
 
 ### Database
 
-MySQL Driver: `mysql+pymysql`. Config reads from `.env` via `pydantic-settings`. The `prestart` Docker service runs `alembic upgrade head` + `initial_data.py` before the backend starts.
+PostgreSQL. Driver: `psycopg` (v3), via SQLAlchemy's `postgresql+psycopg` dialect. Config reads from `.env` via `pydantic-settings`. The `prestart` Docker service runs `alembic upgrade head` + `initial_data.py` before the backend starts.
 
 ### pingsvc internals
 
