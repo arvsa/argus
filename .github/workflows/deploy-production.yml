@@ -6,35 +6,94 @@ on:
       - published
 
 jobs:
-  deploy:
-    runs-on:
-      - self-hosted
-      - production
-    env:
-      ENVIRONMENT: production
-      DOMAIN: ${{ secrets.DOMAIN_PRODUCTION }}
-      STACK_NAME: ${{ secrets.STACK_NAME_PRODUCTION }}
-      SECRET_KEY: ${{ secrets.SECRET_KEY }}
-      FIRST_SUPERUSER: ${{ secrets.FIRST_SUPERUSER }}
-      FIRST_SUPERUSER_PASSWORD: ${{ secrets.FIRST_SUPERUSER_PASSWORD }}
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      EMAILS_FROM_EMAIL: ${{ secrets.EMAILS_FROM_EMAIL }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
-      POSTGRES_DB: ${{ secrets.POSTGRES_DB }}
-      POSTGRES_PORT: ${{ secrets.POSTGRES_PORT }}
-      DOCKER_IMAGE_BACKEND: ${{ secrets.DOCKER_IMAGE_BACKEND }}
-      DOCKER_IMAGE_PINGSVC: ${{ secrets.DOCKER_IMAGE_PINGSVC }}
-      DOCKER_IMAGE_FRONTEND: ${{ secrets.DOCKER_IMAGE_FRONTEND }}
-      SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+  # Builds on a native arm64 GitHub-hosted runner (no QEMU) since the target
+  # EC2 instance is Graviton (t4g.*, matching the region/arch convention
+  # already used for ECR elsewhere in this project's history).
+  build-and-push:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-      - name: Build
-        # --profile client: redis/pingsvc only start under this profile
-        # (see compose.yml); this preserves the existing single-stack
-        # deployment's behavior of always running the local ping pipeline.
-        run: docker compose -f compose.yml --project-name ${{ secrets.STACK_NAME_PRODUCTION }} --profile client build
-      - name: Deploy
-        run: docker compose -f compose.yml --project-name ${{ secrets.STACK_NAME_PRODUCTION }} --profile client up -d
+      - name: Compute image tag
+        id: vars
+        run: echo "image_tag=${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/argus-backend:${{ steps.vars.outputs.image_tag }}
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          target: prod
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/argus-frontend:${{ steps.vars.outputs.image_tag }}
+      - name: Build and push pingsvc
+        uses: docker/build-push-action@v6
+        with:
+          context: ./pingsvc
+          file: pingsvc/Dockerfile
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/argus-pingsvc:${{ steps.vars.outputs.image_tag }}
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ needs.build-and-push.outputs.image_tag }}
+      ECR_REGISTRY: ${{ needs.build-and-push.outputs.ecr_registry }}
+      STACK_NAME: ${{ secrets.STACK_NAME_PRODUCTION }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+    steps:
+      - name: Copy compose.yml to the box
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST_PRODUCTION }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          source: compose.yml
+          target: /home/deploy/code/app
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST_PRODUCTION }}
+          username: ${{ secrets.EC2_SSH_USER }}
+          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            # ECR tokens expire ~12h, so log in fresh on every deploy. The
+            # instance's own IAM instance profile supplies the credentials
+            # here -- no static AWS keys ever touch the box.
+            aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
+              docker login --username AWS --password-stdin "${{ env.ECR_REGISTRY }}"
+            cd /home/deploy/code/app
+            # Only the image tag/registry flow through CI on every deploy;
+            # the rest of .env is a persistent, one-time-bootstrapped secret
+            # file on the box (see deployment.md).
+            grep -q '^TAG=' .env && sed -i "s#^TAG=.*#TAG=${{ env.TAG }}#" .env || echo "TAG=${{ env.TAG }}" >> .env
+            grep -q '^DOCKER_IMAGE_BACKEND=' .env && sed -i "s#^DOCKER_IMAGE_BACKEND=.*#DOCKER_IMAGE_BACKEND=${{ env.ECR_REGISTRY }}/argus-backend#" .env || echo "DOCKER_IMAGE_BACKEND=${{ env.ECR_REGISTRY }}/argus-backend" >> .env
+            grep -q '^DOCKER_IMAGE_FRONTEND=' .env && sed -i "s#^DOCKER_IMAGE_FRONTEND=.*#DOCKER_IMAGE_FRONTEND=${{ env.ECR_REGISTRY }}/argus-frontend#" .env || echo "DOCKER_IMAGE_FRONTEND=${{ env.ECR_REGISTRY }}/argus-frontend" >> .env
+            grep -q '^DOCKER_IMAGE_PINGSVC=' .env && sed -i "s#^DOCKER_IMAGE_PINGSVC=.*#DOCKER_IMAGE_PINGSVC=${{ env.ECR_REGISTRY }}/argus-pingsvc#" .env || echo "DOCKER_IMAGE_PINGSVC=${{ env.ECR_REGISTRY }}/argus-pingsvc" >> .env
+            # --profile client: redis/pingsvc only start under this profile
+            # (see compose.yml); this preserves the existing single-stack
+            # deployment's behavior of always running the local ping pipeline.
+            docker compose -f compose.yml --project-name "${{ env.STACK_NAME }}" --profile client pull
+            docker compose -f compose.yml --project-name "${{ env.STACK_NAME }}" --profile client up -d
