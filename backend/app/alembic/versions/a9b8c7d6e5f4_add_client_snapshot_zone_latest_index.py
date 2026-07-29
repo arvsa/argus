@@ -1,9 +1,9 @@
 """add composite (tenant_id, zone_id, snapshot_ts) index to client_snapshot
 
 get_latest_client_snapshot's ORDER BY snapshot_ts DESC LIMIT 1 has no index
-to walk, so MySQL filesorts full rows -- including the multi-hundred-KB JSON
-columns -- and fails with error 1038 (out of sort memory) on realistically
-sized snapshots, 500ing GET /zones/{tenant_id}/{zone_id}/latest.
+to walk, so the DB sorts full rows -- including the multi-hundred-KB JSON
+columns -- which risks 500ing GET /zones/{tenant_id}/{zone_id}/latest on
+realistically sized snapshots.
 
 Revision ID: a9b8c7d6e5f4
 Revises: f1a2b3c4d5e6

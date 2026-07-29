@@ -13,10 +13,10 @@ jobs:
   test-backend:
     runs-on: ubuntu-latest
     env:
-      MYSQL_ROOT_PASSWORD: testpassword
-      MYSQL_DATABASE: argus_test
-      MYSQL_SERVER: localhost
-      MYSQL_PORT: 3306
+      POSTGRES_PASSWORD: testpassword
+      POSTGRES_DB: argus_test
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: 5432
       PROJECT_NAME: Argus
       SECRET_KEY: testsecretkey1234567890123456789012345
       FIRST_SUPERUSER: admin@example.com
@@ -38,10 +38,10 @@ jobs:
       - name: Create .env file
         run: |
           cat > .env << 'EOF'
-          MYSQL_ROOT_PASSWORD=testpassword
-          MYSQL_DATABASE=argus_test
-          MYSQL_SERVER=localhost
-          MYSQL_PORT=3306
+          POSTGRES_PASSWORD=testpassword
+          POSTGRES_DB=argus_test
+          POSTGRES_SERVER=localhost
+          POSTGRES_PORT=5432
           PROJECT_NAME=Argus
           SECRET_KEY=testsecretkey1234567890123456789012345
           FIRST_SUPERUSER=admin@example.com

@@ -2,7 +2,7 @@
 
 REST API + WebSocket server for Argus. Serves the device hierarchy (an
 admin-configurable NodeType/Node tree — see [../hierarchy.md](../hierarchy.md)),
-auth, and live ping status over `/ws/pings`. MySQL via SQLModel/Alembic;
+auth, and live ping status over `/ws/pings`. PostgreSQL via SQLModel/Alembic;
 subscribes to Redis pub/sub for real-time state changes published by
 `pingsvc`.
 
@@ -13,7 +13,7 @@ stack, and [../CLAUDE.md](../CLAUDE.md) for architecture notes.
 
 - Python 3.10+ (Docker image uses 3.14)
 - [uv](https://docs.astral.sh/uv/) for dependency management
-- A running MySQL instance and Redis instance (see root `compose.yml`)
+- A running PostgreSQL instance and Redis instance (see root `compose.yml`)
 
 ## Setup
 
@@ -26,15 +26,15 @@ package).
 uv sync
 ```
 
-Copy `.env.example` at the repo root to `.env` and fill in `MYSQL_SERVER`,
-`MYSQL_ROOT_PASSWORD`, `MYSQL_DATABASE`, `REDIS_URL`, `SECRET_KEY`,
+Copy `.env.example` at the repo root to `.env` and fill in `POSTGRES_SERVER`,
+`POSTGRES_PASSWORD`, `POSTGRES_DB`, `REDIS_URL`, `SECRET_KEY`,
 `FIRST_SUPERUSER`, `FIRST_SUPERUSER_PASSWORD`. Full variable reference in
 `app/core/config.py` (`Settings`).
 
 ## Running locally
 
-The usual flow is to run MySQL + Redis in Docker and the backend natively for
-hot reload:
+The usual flow is to run PostgreSQL + Redis in Docker and the backend natively
+for hot reload:
 
 ```bash
 docker compose stop backend   # from repo root, if the stack is already up
@@ -66,7 +66,7 @@ Alembic env config and versions live in `app/alembic/`.
 
 ## Tests
 
-Requires MySQL + Redis reachable (either via Docker or local instances).
+Requires PostgreSQL + Redis reachable (either via Docker or local instances).
 
 ```bash
 # Full run inside Docker (builds, runs, tears down) — from repo root

@@ -507,17 +507,17 @@ class ClientSnapshotCreate(ClientSnapshotBase):
 class ClientSnapshot(ClientSnapshotBase, table=True):
     __tablename__ = "client_snapshot"
     # get_latest_client_snapshot's ORDER BY snapshot_ts LIMIT 1 must be
-    # resolvable from an index: without one MySQL filesorts entire rows,
-    # and rows here carry multi-hundred-KB JSON columns, so realistically
-    # sized snapshots blow the sort buffer (error 1038) and 500 the zone
-    # detail endpoint.
+    # resolvable from an index: without one the DB sorts entire rows to
+    # satisfy the ORDER BY, and rows here carry multi-hundred-KB JSON
+    # columns, so realistically sized snapshots make that sort expensive
+    # enough to risk 500ing the zone detail endpoint.
     __table_args__ = (
         Index("ix_client_snapshot_zone_latest", "tenant_id", "zone_id", "snapshot_ts"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     # unix-ms timestamp (pingsvc's nowMs(), ~13 digits) needs BigInteger --
-    # a plain MySQL INT overflows on real timestamps (caught by an
+    # a plain 32-bit INT overflows on real timestamps (caught by an
     # end-to-end smoke test; small test fixture values like 1000 never
     # exercised this).
     snapshot_ts: int = Field(sa_type=BigInteger)

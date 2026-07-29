@@ -18,7 +18,7 @@ docker compose logs -f <name>  # tail logs for one or more services
 docker compose stop backend    # stop just one service (e.g. to run it locally instead)
 ```
 
-The first run may take a minute while the backend waits for MySQL and runs migrations — `docker compose logs -f prestart` to watch that happen.
+The first run may take a minute while the backend waits for PostgreSQL and runs migrations — `docker compose logs -f prestart` to watch that happen.
 
 ### Running the backend locally (without Docker)
 
@@ -29,7 +29,7 @@ uv sync                      # first time only
 fastapi dev app/main.py      # hot-reload dev server at :8000
 ```
 
-The Docker stack keeps running for MySQL and Redis; only the backend switches to local. `fastapi dev` reads config from `../.env` — override any variable by exporting it in your shell first (real env vars take precedence over `.env`), which is exactly how the argus-server walkthrough below runs a second backend instance with different settings.
+The Docker stack keeps running for PostgreSQL and Redis; only the backend switches to local. `fastapi dev` reads config from `../.env` — override any variable by exporting it in your shell first (real env vars take precedence over `.env`), which is exactly how the argus-server walkthrough below runs a second backend instance with different settings.
 
 ### Running pingsvc locally
 
@@ -153,12 +153,12 @@ The server is a second backend instance, pointed at its own database, with `S3_B
 
 ```bash
 # One-time: a separate database so the server's tables don't mix with the zone's
-docker compose exec -T db mysql -uroot -pchangethis -e "CREATE DATABASE IF NOT EXISTS argus_server;"
+docker compose exec -T db createdb -U postgres argus_server 2>/dev/null || true
 
 cd backend
 uv sync   # first time only
 
-export MYSQL_SERVER=localhost MYSQL_PORT=3306 MYSQL_DATABASE=argus_server MYSQL_ROOT_PASSWORD=changethis
+export POSTGRES_SERVER=localhost POSTGRES_PORT=5432 POSTGRES_DB=argus_server POSTGRES_PASSWORD=changethis
 export REDIS_URL=redis://localhost:6379/0
 export S3_BUCKET=argus-metrics S3_ENDPOINT=http://localhost:9000 S3_ACCESS_KEY=minioadmin S3_SECRET_KEY=minioadmin
 export PROJECT_NAME=argus-server FIRST_SUPERUSER=admin@example.com FIRST_SUPERUSER_PASSWORD=changethis SECRET_KEY=changethis
@@ -262,7 +262,7 @@ ARGUS_PINGSVC_SYNC_TOKEN=changethis
 ARGUS_BACKEND_URL=http://backend:8000
 ```
 
-`PINGSVC_SYNC_TOKEN` (read by the backend) and `ARGUS_PINGSVC_SYNC_TOKEN` (read by pingsvc) must be identical — same pattern as `MYSQL_ROOT_PASSWORD` being shared between `db` and `backend`. Skip this and the mock-LAN containers still come up and answer pings/SNMP fine, but pingsvc never calls `GET /discovery/infra-targets-internal` at all — the Infrastructure Targets page will sit there doing nothing no matter how long you wait.
+`PINGSVC_SYNC_TOKEN` (read by the backend) and `ARGUS_PINGSVC_SYNC_TOKEN` (read by pingsvc) must be identical — same pattern as `POSTGRES_PASSWORD` being shared between `db` and `backend`. Skip this and the mock-LAN containers still come up and answer pings/SNMP fine, but pingsvc never calls `GET /discovery/infra-targets-internal` at all — the Infrastructure Targets page will sit there doing nothing no matter how long you wait.
 
 ### 1. Bring up the stack with mock-LAN merged in
 
