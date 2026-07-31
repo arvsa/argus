@@ -80,13 +80,7 @@ The first run may take a minute while the backend waits for PostgreSQL and runs 
 
 `client` mode brings up a single zone with nothing configured to export anywhere — the ping pipeline, Redis, REST API, and WebSocket stream all work exactly as a single-stack deployment. To see the full multi-zone `argus-client` → object storage → `argus-server` pipeline running end-to-end in your own terminal, see **[development.md](development.md#running-a-full-argus-client--argus-server-locally)**.
 
-To exercise device discovery (SNMP infra polling, plan/device-discovery-v1.md) without real network hardware, add `--with-mock-lan`:
-
-```bash
-./scripts/run.sh client --with-mock-lan
-```
-
-This joins a small fixture environment (three ICMP-only "devices" plus an `snmpsim` mock router) onto pingsvc's own network as part of the same stack — no extra setup for the fixture itself. Discovery does need pingsvc's backend connection turned on first though (`ARGUS_BACKEND_URL`/`PINGSVC_SYNC_TOKEN` in `.env` — off by default, same as target hot-reload); see the full walkthrough in **[development.md](development.md#exercising-device-discovery-with-the-mock-lan-fixture)** for that one-time step, adding the Infrastructure Target, and reviewing what discovery finds on the Discovered Devices page. Standalone usage (without the rest of the app stack) is still available via `scripts/mock-lan/{up,down,smoke-test}.sh` — see `compose.mock-lan.yml`'s header comment.
+Devices are added by an operator supplying a static IP — either one at a time or via CSV bulk import — there is no automatic discovery.
 
 Prefer to skip `scripts/run.sh` and run the underlying `docker compose` commands yourself? See **[development.md's Docker Compose basics](development.md#docker-compose-basics)**.
 

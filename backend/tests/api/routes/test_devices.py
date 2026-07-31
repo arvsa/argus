@@ -417,10 +417,10 @@ def test_targets_export_succeeds_regardless_of_device_count(client: TestClient) 
 def test_targets_export_device_without_mac_is_byte_identical_to_today(
     client: TestClient,
 ) -> None:
-    """Regression sentinel (plan/device-discovery-v1.md §3 step 1): a
-    device with no mac on file must still produce the plain
-    "addr,ancestor1;ancestor2;..." line -- no third field, no trailing
-    comma -- exactly what pingsvc's parseTargetLine has always accepted."""
+    """Regression sentinel: a device with no mac on file must still produce
+    the plain "addr,ancestor1;ancestor2;..." line -- no third field, no
+    trailing comma -- exactly what pingsvc's parseTargetLine has always
+    accepted."""
     headers = _su(client)
     tenant_id = random_lower_string()
     root_type = _root_type(client, headers, tenant_id)
