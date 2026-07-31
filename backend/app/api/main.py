@@ -2,7 +2,6 @@ from fastapi import APIRouter
 
 from app.api.routes import (
     devices,
-    discovery,
     login,
     node_types,
     nodes,
@@ -31,7 +30,6 @@ def build_api_router(role: str) -> APIRouter:
     router.include_router(node_types.router)
     router.include_router(nodes.router)
     router.include_router(devices.router)
-    router.include_router(discovery.router)
 
     if settings.ENVIRONMENT == "local":
         router.include_router(private.router)
