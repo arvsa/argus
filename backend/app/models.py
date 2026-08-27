@@ -254,14 +254,10 @@ class NodesPublic(SQLModel):
 
 class DeviceBase(SQLModel):
     addr: str = Field(max_length=255, unique=True, index=True)
-    # Identity for device_key (plan/device-discovery-v1.md §2.3): mac when
-    # known, else addr. No uniqueness/index here -- MAC-based dedup on
-    # discovery ingestion is DiscoveredDevice's job (a separate, later
-    # plan step), not this table's.
+    # Identity for device_key: mac when known, else addr. No
+    # uniqueness/index here.
     mac: str | None = Field(default=None, max_length=32)
-    # Enrichment fields (plan §2.2) that survive a DiscoveredDevice's
-    # promotion and show up in the UI instead of a bare address. Both
-    # freely editable post-creation, like addr/node_id/mac.
+    # Freely editable post-creation, like addr/node_id/mac.
     hostname: str | None = Field(default=None, max_length=255)
     timezone: str | None = Field(default=None, max_length=64)
 
@@ -341,138 +337,6 @@ class DeviceBulkImportRowResult(SQLModel):
 
 class DeviceBulkImportResponse(SQLModel):
     results: list[DeviceBulkImportRowResult]
-
-
-# ========== Device discovery (see plan/device-discovery-v1.md §2.2) ==========
-#
-# A separate candidate pool, not written straight into Device: an unreviewed
-# candidate landing directly in Device would start getting pinged (GET
-# /devices/targets-export exports every Device row unconditionally) before
-# an operator ever saw it. Promotion (approve, or AUTO_POPULATE_DISCOVERED_
-# DEVICES) creates/merges into a real Device via crud.promote_discovered_device.
-
-
-class DiscoveredDeviceReport(SQLModel):
-    """One sighting reported by pingsvc's discovery subsystem -- the body
-    shape of a single entry in POST /devices/discovered's batch."""
-
-    addr: str
-    mac: str | None = None
-    hostname: str | None = None
-    discovered_via: str
-
-
-class DiscoveredDeviceReportBatch(SQLModel):
-    reports: list[DiscoveredDeviceReport]
-
-
-class DiscoveredDeviceBase(SQLModel):
-    addr: str = Field(max_length=255, unique=True, index=True)
-    mac: str | None = Field(default=None, max_length=32)
-    hostname: str | None = Field(default=None, max_length=255)
-    discovered_via: str = Field(max_length=64)
-    status: str = Field(default="pending", max_length=16)
-
-
-class DiscoveredDevice(DiscoveredDeviceBase, table=True):
-    __tablename__ = "discovered_device"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    first_seen_at: datetime = Field(
-        default_factory=get_datetime_utc,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-    last_seen_at: datetime = Field(
-        default_factory=get_datetime_utc,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-
-
-class DiscoveredDevicePublic(DiscoveredDeviceBase):
-    id: uuid.UUID
-    first_seen_at: datetime
-    last_seen_at: datetime
-    # Computed at read time (settings.DISCOVERY_STALE_THRESHOLD_SECONDS
-    # against last_seen_at), never a stored column -- see
-    # crud.discovered_device_is_stale.
-    is_stale: bool
-
-
-class DiscoveredDevicesPublic(SQLModel):
-    data: list[DiscoveredDevicePublic]
-    count: int
-
-
-# ========== Infra poll target configuration (plan/device-discovery-v1.md §2.6) ==========
-#
-# Per-target SNMP credentials, backend-owned rather than pushed through
-# pingsvc-local env vars/flags -- different infrastructure devices
-# realistically have different community strings, and an operator already
-# manages everything else (zones, hierarchy, devices) through the web UI.
-
-
-class InfraPollTargetBase(SQLModel):
-    addr: str = Field(max_length=255, unique=True, index=True)
-    # "router" / "switch" -- hints whether to poll ARP-only or ARP+CAM.
-    # "wlc" reserved for whenever wireless-controller support lands (§2.1),
-    # not implemented in v1.
-    kind: str = Field(max_length=16)
-    enabled: bool = Field(default=True)
-
-
-class InfraPollTargetCreate(InfraPollTargetBase):
-    community: str
-
-
-class InfraPollTargetUpdate(SQLModel):
-    addr: str | None = Field(default=None, max_length=255)
-    kind: str | None = Field(default=None, max_length=16)
-    enabled: bool | None = None
-    # Only present when the operator wants to change it -- omitted (not
-    # explicit null) leaves the stored value untouched, same as every
-    # other optional field on this update model.
-    community: str | None = None
-
-
-class InfraPollTarget(InfraPollTargetBase, table=True):
-    __tablename__ = "infra_poll_target"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    # Plaintext for now -- encryption at rest is a real, separate
-    # requirement not yet designed (plan §4, same open item as
-    # ZoneEncryptionKey's key material in
-    # plan/optional-snapshot-encryption-v1.md). Never leaves this table via
-    # the human-facing API -- see InfraPollTargetPublic -- only pingsvc's
-    # own internal pull route gets the plaintext value.
-    community: str = Field(max_length=255)
-    created_at: datetime | None = Field(
-        default_factory=get_datetime_utc,
-        sa_type=DateTime(timezone=True),  # type: ignore
-    )
-
-
-# Deliberately omits `community` -- see InfraPollTarget.community's comment.
-# community_set tells the UI "a value is configured" without ever
-# revealing it, same write-only pattern as the encryption-key panel in
-# plan/optional-snapshot-encryption-v1.md.
-class InfraPollTargetPublic(InfraPollTargetBase):
-    id: uuid.UUID
-    created_at: datetime | None = None
-    community_set: bool
-
-
-class InfraPollTargetsPublic(SQLModel):
-    data: list[InfraPollTargetPublic]
-    count: int
-
-
-# pingsvc-facing shape for GET /discovery/infra-targets-internal -- the one
-# place the plaintext community is ever returned, over the same
-# already-authenticated verify_pingsvc_token channel as targets-export-internal.
-class InfraPollTargetInternal(SQLModel):
-    addr: str
-    community: str
-    kind: str
 
 
 # ========== argus-server ingestion (Phase 3) ============

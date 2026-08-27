@@ -1,25 +1,15 @@
-# Device Naming, Discovery Review UI, and Bulk Import
+# Device Naming and Bulk Import
 
 ## 1. Context
 
-Split out of `plan/device-discovery-v1.md` to keep that plan focused on
-the discovery *mechanism* (SNMP polling of network infrastructure,
-`device_key` identity, Redis rekeying) separate from the UI-facing and
-manual-entry work, which is largely independent of it.
-
 This plan covers everything about a device actually having a *name* an
-operator sees instead of a bare IP -- for devices that came from discovery
-*and* devices entered by hand -- plus the review/configuration UI the
-discovery plan's backend APIs need, and the separate, fully independent
-manual bulk-import path for static IPs. Pure backend-read-path and
-frontend work; pingsvc has no role in anything in this document.
+operator sees instead of a bare IP, entered by hand or in bulk, plus the
+fully independent manual bulk-import path for static IPs. Pure
+backend-read-path and frontend work; pingsvc has no role in anything in
+this document.
 
-Two of this plan's sections (§2.3, §2.4) are UI for backend APIs designed
-in `plan/device-discovery-v1.md` (§3.6 infra poll targets, §3.7 discovery
-review/auto-populate) and can't ship before those exist. Everything else
-here -- hostname display, manual entry, bulk import -- has no dependency on
-that plan at all and could ship independently, in any order, including
-before discovery work starts.
+Devices are added exclusively by an operator supplying a static IP (single
+add or CSV bulk import) -- there is no discovery mechanism.
 
 ## 2. Design
 
@@ -28,12 +18,10 @@ before discovery work starts.
 Hostname/MAC/timezone don't ride along on every ping event -- that's
 slow-changing metadata, not live state, and re-broadcasting it every second
 through Redis would be pure waste. Instead, `/state` (and any other
-live-status read path) joins each Redis event's `device_key` (or `addr`,
-for anything not yet using `device_key` -- see the discovery plan's §3.3/
-§3.4) against `Device` (falling back to `DiscoveredDevice` for anything not
-yet promoted, if that plan has shipped) at *read* time to attach the
-human-facing name -- a backend-only change, consistent with the backend
-already owning "how do we present a device to a human."
+live-status read path) joins each Redis event's `device_key` (or `addr`)
+against `Device` at *read* time to attach the human-facing name -- a
+backend-only change, consistent with the backend already owning "how do we
+present a device to a human."
 
 ### 2.2 Frontend: hostname display
 
@@ -48,40 +36,12 @@ live-status table (§2.1 does the equivalent join server-side for `/state`
 itself; either is fine, whichever ships first -- they're not mutually
 exclusive, but only one is strictly needed).
 
-### 2.3 Frontend: discovered-devices review panel
-
-Depends on `plan/device-discovery-v1.md` §3.7 (`GET /devices/discovered`,
-`POST /devices/discovered/{id}/approve`/`reject`, `AUTO_POPULATE_DISCOVERED_DEVICES`)
-having shipped.
-
-New "Discovered devices" panel/page (superuser-only, mirrors the
-`AssignedDevices`/`ZoneSigningKey` review-list patterns already in the
-codebase): list pending candidates (surfacing staleness per that plan's
-§3.5 poll-cycle-based rule), approve/reject actions, and a settings toggle
-for auto-populate (superuser-only, same gating as other admin settings).
-
-### 2.4 Frontend: infrastructure-targets settings panel
-
-Depends on `plan/device-discovery-v1.md` §3.6 (`InfraPollTarget` CRUD
-routes) having shipped.
-
-New "Infrastructure targets" settings panel (superuser-only): add/edit/
-remove routers/switches/WLCs by address + kind, a masked community-string
-input that's write-only (never re-displayed once saved, same convention as
-the encryption-key panel in `plan/optional-snapshot-encryption-v1.md`), and
-an enabled/disabled toggle per target.
-
 ### 2.5 Manual/static device entry: name field
 
-The manual path (reserved for static-IP devices discovery will never see)
-needs the same asset-record quality as the discovered path -- a name, not
-just an address. `AssignedDevices.tsx`'s existing "Add device" form
-(address-only today) gains an optional `hostname` input alongside `addr`.
-No schema/API work: `Device.hostname` already exists once
-`plan/device-discovery-v1.md` §3.2's `Device` field additions have shipped
-(and if that plan hasn't shipped yet, adding the plain `hostname` column to
-`Device` is a one-line prerequisite, not a reason to block this on the
-whole discovery plan).
+The manual path -- the only way a device is ever added -- needs a proper
+asset-record quality, not just a bare address. `AssignedDevices.tsx`'s
+"Add device" form gains an optional `hostname` input alongside `addr`.
+`Device.hostname` already exists as a column on the `Device` table.
 
 ### 2.6 Bulk import: CSV upload
 
@@ -123,21 +83,14 @@ target-sync` work, which proposed a plain-address-per-line textarea and a
 
 1. **`feature/device-bulk-import`** (§2.5, §2.6) -- name field on the
    existing single-add form, `POST /devices/bulk-import` + CSV parsing +
-   per-row outcome reporting. No dependency on
-   `plan/device-discovery-v1.md` at all -- can ship first, independent of
-   everything else in either plan. RED: a batch with a new row, a
+   per-row outcome reporting. RED: a batch with a new row, a
    duplicate-address row, an already-assigned-elsewhere row, and a
    malformed row all in one upload -- confirm the three valid categories
    commit correctly and the malformed row is reported, not silently
    dropped or blocking the others.
 2. **`feature/device-naming-display`** (§2.1, §2.2) -- read-time enrichment
    join + hostname display in `Devices.tsx`/`AssignedDevices.tsx`. Only
-   depends on `Device.hostname` existing (§2.5's prerequisite, or
-   `plan/device-discovery-v1.md` §3.2, whichever lands first).
-3. **`feature/device-discovery-ui`** (§2.3, §2.4) -- discovered-devices
-   review panel + infra-targets settings panel + auto-populate toggle.
-   Gated on `plan/device-discovery-v1.md`'s steps 2 (schema) and 3
-   (infra-target config) having shipped.
+   depends on `Device.hostname` existing (§2.5's prerequisite).
 
 Each branch: RED → implement → GREEN (`./scripts/test.sh`, frontend
 `vitest`) → show diff → wait for approval → commit → push → PR, same
@@ -162,5 +115,5 @@ cadence as every other change this session.
 | Area | Files |
 |---|---|
 | Backend | `backend/app/api/routes/devices.py` (`/state` read-time join, `POST /devices/bulk-import`), `backend/app/crud.py` (shared per-row create/reassign logic) |
-| Frontend | `frontend/src/pages/Devices.tsx`, `frontend/src/components/AssignedDevices.tsx` (hostname display, name field, bulk-import UI), new discovered-devices review page/component, new infrastructure-targets settings page/component |
+| Frontend | `frontend/src/pages/Devices.tsx`, `frontend/src/components/AssignedDevices.tsx` (hostname display, name field, bulk-import UI) |
 | Tests | `backend/tests/api/routes/test_devices.py` (bulk-import per-row outcomes, read-time join), frontend component tests for hostname display, bulk-import, review panel, and infra-targets panel |
